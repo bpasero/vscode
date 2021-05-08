@@ -32,7 +32,7 @@ import { DirtyFilesIndicator } from 'vs/workbench/contrib/files/common/dirtyFile
 import { UndoCommand, RedoCommand } from 'vs/editor/browser/editorExtensions';
 import { IUndoRedoService } from 'vs/platform/undoRedo/common/undoRedo';
 import { IExplorerService } from 'vs/workbench/contrib/files/browser/files';
-import { FileEditorInputSerializer, FileEditorWorkingCopyEditorHandler } from 'vs/workbench/contrib/files/browser/editors/textFileEditorHandler';
+import { FileEditorInputSerializer, FileEditorWorkingCopyEditorHandler } from 'vs/workbench/contrib/files/browser/editors/fileEditorHandler';
 
 class FileUriLabelContribution implements IWorkbenchContribution {
 
