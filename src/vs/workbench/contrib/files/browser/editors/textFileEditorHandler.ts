@@ -81,7 +81,10 @@ export class FileEditorWorkingCopyEditorHandler extends Disposable implements IW
 	private installHandler(): void {
 		this._register(this.workingCopyEditorService.registerHandler({
 			handles: workingCopy => workingCopy.typeId === NO_TYPE_ID && this.fileService.canHandleResource(workingCopy.resource),
-			isOpen: (workingCopy, editor) => editor instanceof FileEditorInput && isEqual(workingCopy.resource, editor.resource),
+			// Naturally it would make sense here to check for `instanceof FileEditorInput`
+			// but because some custom editors also leverage text file based working copies
+			// we need to do a weaker check by only comparing for the resource
+			isOpen: (workingCopy, editor) => isEqual(workingCopy.resource, editor.resource),
 			createEditor: workingCopy => this.editorService.createEditorInput({ resource: workingCopy.resource, forceFile: true })
 		}));
 	}
