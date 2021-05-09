@@ -30,6 +30,7 @@ import { mnemonicButtonLabel } from 'vs/base/common/labels';
 import { listenStream } from 'vs/base/common/stream';
 import { DisposableStore, toDisposable } from 'vs/base/common/lifecycle';
 import { once } from 'vs/base/common/functional';
+import { coalesce } from 'vs/base/common/arrays';
 
 //#region Browser File Upload (drag and drop, input element)
 
@@ -103,6 +104,10 @@ export class BrowserFileUpload {
 
 		const transfer: IWebkitDataTransfer = { items: [] };
 
+		// We want to reuse the same code for uploading from
+		// Drag & Drop as well as input element based upload
+		// so we convert into webkit data transfer when the
+		// input element approach is used (simplified).
 		for (const file of source) {
 			transfer.items.push({
 				webkitGetAsEntry: () => {
@@ -400,33 +405,41 @@ export class NativeFileImport {
 		this.hostService.focus();
 
 		// Handle folders by adding to workspace if we are in workspace context and if dropped on top
-		const folders = resolvedFiles.filter(resolvedFile => resolvedFile.success && resolvedFile.stat && resolvedFile.stat.isDirectory).map(resolvedFile => ({ uri: resolvedFile.stat!.resource }));
+		const folders = resolvedFiles.filter(resolvedFile => resolvedFile.success && resolvedFile.stat?.isDirectory).map(resolvedFile => ({ uri: resolvedFile.stat!.resource }));
 		if (folders.length > 0 && target.isRoot) {
 			const buttons = [
-				folders.length > 1 ? localize('copyFolders', "&&Copy Folders") : localize('copyFolder', "&&Copy Folder"),
+				folders.length > 1 ?
+					localize('copyFolders', "&&Copy Folders") :
+					localize('copyFolder', "&&Copy Folder"),
 				localize('cancel', "Cancel")
 			];
-			const workspaceFolderSchemas = this.contextService.getWorkspace().folders.map(folder => folder.uri.scheme);
-			let message = folders.length > 1 ? localize('copyfolders', "Are you sure to want to copy folders?") : localize('copyfolder', "Are you sure to want to copy '{0}'?", basename(folders[0].uri));
-			if (folders.some(folder => workspaceFolderSchemas.indexOf(folder.uri.scheme) >= 0)) {
 
-				// We only allow to add a folder to the workspace if there is already a workspace folder with that scheme
+			let message: string;
+
+			// We only allow to add a folder to the workspace if there is already a workspace folder with that scheme
+			const workspaceFolderSchemas = this.contextService.getWorkspace().folders.map(folder => folder.uri.scheme);
+			if (folders.some(folder => workspaceFolderSchemas.indexOf(folder.uri.scheme) >= 0)) {
 				buttons.unshift(folders.length > 1 ? localize('addFolders', "&&Add Folders to Workspace") : localize('addFolder', "&&Add Folder to Workspace"));
 				message = folders.length > 1 ?
 					localize('dropFolders', "Do you want to copy the folders or add the folders to the workspace?") :
 					localize('dropFolder', "Do you want to copy '{0}' or add '{0}' as a folder to the workspace?", basename(folders[0].uri));
+			} else {
+				message = folders.length > 1 ?
+					localize('copyfolders', "Are you sure to want to copy folders?") :
+					localize('copyfolder', "Are you sure to want to copy '{0}'?", basename(folders[0].uri));
 			}
 
 			const { choice } = await this.dialogService.show(Severity.Info, message, buttons);
+
+			// Add folders
 			if (choice === buttons.length - 3) {
 				return this.workspaceEditingService.addFolders(folders);
 			}
 
+			// Copy resources
 			if (choice === buttons.length - 2) {
 				return this.addResources(target, droppedResources.map(res => res.resource), token);
 			}
-
-			return undefined;
 		}
 
 		// Handle dropped files (only support FileStat as target)
@@ -454,7 +467,7 @@ export class NativeFileImport {
 				});
 			}
 
-			const resourcesFiltered = (await Promise.all(resources.map(async resource => {
+			const resourcesFiltered = coalesce((await Promise.all(resources.map(async resource => {
 				if (targetNames.has(caseSensitive ? basename(resource) : basename(resource).toLowerCase())) {
 					const confirmationResult = await this.dialogService.confirm(getFileOverwriteConfirm(basename(resource)));
 					if (!confirmationResult.confirmed) {
@@ -463,8 +476,9 @@ export class NativeFileImport {
 				}
 
 				return resource;
-			}))).filter(resource => resource instanceof URI) as URI[];
+			}))));
 
+			// Copy resources through bulk edit API
 			const resourceFileEdits = resourcesFiltered.map(resource => {
 				const sourceFileName = basename(resource);
 				const targetFile = joinPath(target.resource, sourceFileName);
@@ -473,8 +487,12 @@ export class NativeFileImport {
 			});
 
 			await this.explorerService.applyBulkEdit(resourceFileEdits, {
-				undoLabel: resourcesFiltered.length === 1 ? localize('copyFile', "Copy {0}", basename(resourcesFiltered[0])) : localize('copynFile', "Copy {0} resources", resourcesFiltered.length),
-				progressLabel: resourcesFiltered.length === 1 ? localize('copyingFile', "Copying {0}", basename(resourcesFiltered[0])) : localize('copyingnFile', "Copying {0} resources", resourcesFiltered.length)
+				undoLabel: resourcesFiltered.length === 1 ?
+					localize('copyFile', "Copy {0}", basename(resourcesFiltered[0])) :
+					localize('copynFile', "Copy {0} resources", resourcesFiltered.length),
+				progressLabel: resourcesFiltered.length === 1 ?
+					localize('copyingFile', "Copying {0}", basename(resourcesFiltered[0])) :
+					localize('copyingnFile', "Copying {0} resources", resourcesFiltered.length)
 			});
 
 			// if we only add one file, just open it directly
@@ -517,7 +535,8 @@ export class FileDownload {
 	download(source: ExplorerItem[]): Promise<void> {
 		const cts = new CancellationTokenSource();
 
-		return this.progressService.withProgress(
+		// Indicate progress globally
+		const downloadPromise = this.progressService.withProgress(
 			{
 				location: ProgressLocation.Window,
 				delay: 800,
@@ -527,6 +546,11 @@ export class FileDownload {
 			async progress => this.doDownload(source, progress, cts),
 			() => cts.dispose(true)
 		);
+
+		// Also indicate progress in the files view
+		this.progressService.withProgress({ location: VIEW_ID, delay: 500 }, () => downloadPromise);
+
+		return downloadPromise;
 	}
 
 	private async doDownload(source: ExplorerItem[], progress: IProgress<IProgressStep>, cts: CancellationTokenSource): Promise<void> {
@@ -719,8 +743,12 @@ export class FileDownload {
 	private async doDownloadNative(explorerItem: ExplorerItem, progress: IProgress<IProgressStep>, cts: CancellationTokenSource): Promise<void> {
 		progress.report({ message: explorerItem.name });
 
-		let defaultUri = explorerItem.isDirectory ? await this.fileDialogService.defaultFolderPath(Schemas.file) : await this.fileDialogService.defaultFilePath(Schemas.file);
-		defaultUri = joinPath(defaultUri, explorerItem.name);
+		const defaultUri = joinPath(
+			explorerItem.isDirectory ?
+				await this.fileDialogService.defaultFolderPath(Schemas.file) :
+				await this.fileDialogService.defaultFilePath(Schemas.file),
+			explorerItem.name
+		);
 
 		const destination = await this.fileDialogService.showSaveDialog({
 			availableFileSystems: [Schemas.file],
