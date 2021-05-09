@@ -55,7 +55,7 @@ import { IEditorInput } from 'vs/workbench/common/editor';
 import { IUriIdentityService } from 'vs/workbench/services/uriIdentity/common/uriIdentity';
 import { ResourceFileEdit } from 'vs/editor/browser/services/bulkEditService';
 import { IExplorerService } from 'vs/workbench/contrib/files/browser/files';
-import { BrowserFileImport, DesktopFileImport, getMultipleFilesOverwriteConfirm } from 'vs/workbench/contrib/files/browser/fileImportExport';
+import { BrowserFileUpload, NativeFileImport, getMultipleFilesOverwriteConfirm } from 'vs/workbench/contrib/files/browser/fileImportExport';
 import { toErrorMessage } from 'vs/base/common/errorMessage';
 
 export class ExplorerDelegate implements IListVirtualDelegate<ExplorerItem> {
@@ -971,11 +971,11 @@ export class FileDragAndDrop implements ITreeDragAndDrop<ExplorerItem> {
 			// Desktop DND (Import file)
 			if (data instanceof NativeDragAndDropData) {
 				if (isWeb) {
-					const browserFileUpload = this.instantiationService.createInstance(BrowserFileImport);
-					await browserFileUpload.import(target, originalEvent);
+					const browserUpload = this.instantiationService.createInstance(BrowserFileUpload);
+					await browserUpload.upload(target, originalEvent);
 				} else {
-					const desktopFileImport = this.instantiationService.createInstance(DesktopFileImport);
-					await desktopFileImport.import(resolvedTarget, originalEvent);
+					const nativeImport = this.instantiationService.createInstance(NativeFileImport);
+					await nativeImport.import(resolvedTarget, originalEvent);
 				}
 			}
 
