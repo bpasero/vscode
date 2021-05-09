@@ -951,14 +951,10 @@ const uploadFileHandler = async (accessor: ServicesAccessor) => {
 	const context = explorerService.getContext(true);
 	const element = context.length ? context[0] : explorerService.roots[0];
 
-	const { files, disposable } = await triggerUpload();
-	try {
-		if (files) {
-			const browserUpload = instantiationService.createInstance(BrowserFileUpload);
-			await browserUpload.upload(element, files);
-		}
-	} finally {
-		disposable.dispose();
+	const files = await triggerUpload();
+	if (files) {
+		const browserUpload = instantiationService.createInstance(BrowserFileUpload);
+		await browserUpload.upload(element, files);
 	}
 };
 

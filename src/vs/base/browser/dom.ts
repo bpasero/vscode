@@ -1258,8 +1258,8 @@ export function triggerDownload(dataOrUri: Uint8Array | URI, name: string): void
 	setTimeout(() => document.body.removeChild(anchor));
 }
 
-export function triggerUpload(): Promise<{ files: FileList | undefined, disposable: IDisposable }> {
-	return new Promise<{ files: FileList | undefined, disposable: IDisposable }>(resolve => {
+export function triggerUpload(): Promise<FileList | undefined> {
+	return new Promise<FileList | undefined>(resolve => {
 
 		// In order to upload to the browser, create a
 		// input element of type `file` and click it
@@ -1269,18 +1269,15 @@ export function triggerUpload(): Promise<{ files: FileList | undefined, disposab
 		input.type = 'file';
 		input.multiple = true;
 
-		const disposable = new DisposableStore();
-		disposable.add(toDisposable(() => document.body.removeChild(input)));
-
 		// Resolve once the input event has fired once
-		disposable.add(Event.once(Event.fromDOMEventEmitter(input, 'input'))(() => {
-			resolve({
-				files: withNullAsUndefined(input.files),
-				disposable
-			});
-		}));
+		Event.once(Event.fromDOMEventEmitter(input, 'input'))(() => {
+			resolve(withNullAsUndefined(input.files));
+		});
 
 		input.click();
+
+		// Ensure to remove the element from DOM eventually
+		setTimeout(() => document.body.removeChild(input));
 	});
 }
 
