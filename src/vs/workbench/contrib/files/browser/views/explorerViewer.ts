@@ -9,7 +9,7 @@ import * as glob from 'vs/base/common/glob';
 import { IListVirtualDelegate, ListDragOverEffect } from 'vs/base/browser/ui/list/list';
 import { IProgressService, ProgressLocation, } from 'vs/platform/progress/common/progress';
 import { INotificationService, Severity } from 'vs/platform/notification/common/notification';
-import { IFileService, FileKind, FileOperationError, FileOperationResult, FileSystemProviderCapabilities } from 'vs/platform/files/common/files';
+import { IFileService, FileKind, FileOperationError, FileOperationResult } from 'vs/platform/files/common/files';
 import { IWorkbenchLayoutService } from 'vs/workbench/services/layout/browser/layoutService';
 import { IWorkspaceContextService, WorkbenchState } from 'vs/platform/workspace/common/workspace';
 import { IDisposable, Disposable, dispose, toDisposable, DisposableStore } from 'vs/base/common/lifecycle';
@@ -20,7 +20,7 @@ import { IContextViewService } from 'vs/platform/contextview/browser/contextView
 import { IThemeService } from 'vs/platform/theme/common/themeService';
 import { IConfigurationService } from 'vs/platform/configuration/common/configuration';
 import { IFilesConfiguration } from 'vs/workbench/contrib/files/common/files';
-import { dirname, joinPath, basename, distinctParents } from 'vs/base/common/resources';
+import { dirname, joinPath, distinctParents } from 'vs/base/common/resources';
 import { InputBox, MessageType } from 'vs/base/browser/ui/inputbox/inputBox';
 import { localize } from 'vs/nls';
 import { attachInputBoxStyler } from 'vs/platform/theme/common/styler';
@@ -30,14 +30,13 @@ import { equals, deepClone } from 'vs/base/common/objects';
 import * as path from 'vs/base/common/path';
 import { ExplorerItem, NewExplorerItem } from 'vs/workbench/contrib/files/common/explorerModel';
 import { compareFileExtensionsDefault, compareFileNamesDefault, compareFileNamesUpper, compareFileExtensionsUpper, compareFileNamesLower, compareFileExtensionsLower, compareFileNamesUnicode, compareFileExtensionsUnicode } from 'vs/base/common/comparers';
-import { fillResourceDataTransfers, CodeDataTransfers, extractResources, containsDragType } from 'vs/workbench/browser/dnd';
+import { fillResourceDataTransfers, CodeDataTransfers, containsDragType } from 'vs/workbench/browser/dnd';
 import { IInstantiationService } from 'vs/platform/instantiation/common/instantiation';
 import { IDragAndDropData, DataTransfers } from 'vs/base/browser/dnd';
 import { Schemas } from 'vs/base/common/network';
 import { NativeDragAndDropData, ExternalElementsDragAndDropData, ElementsDragAndDropData } from 'vs/base/browser/ui/list/listView';
 import { isMacintosh, isWeb } from 'vs/base/common/platform';
 import { IDialogService, getFileNamesMessage } from 'vs/platform/dialogs/common/dialogs';
-import { IHostService } from 'vs/workbench/services/host/browser/host';
 import { IWorkspaceEditingService } from 'vs/workbench/services/workspaces/common/workspaceEditing';
 import { URI } from 'vs/base/common/uri';
 import { IEditorService } from 'vs/workbench/services/editor/common/editorService';
@@ -53,11 +52,11 @@ import { isNumber } from 'vs/base/common/types';
 import { domEvent } from 'vs/base/browser/event';
 import { IEditableData } from 'vs/workbench/common/views';
 import { IEditorInput } from 'vs/workbench/common/editor';
-import { CancellationToken } from 'vs/base/common/cancellation';
 import { IUriIdentityService } from 'vs/workbench/services/uriIdentity/common/uriIdentity';
 import { ResourceFileEdit } from 'vs/editor/browser/services/bulkEditService';
-import { getFileOverwriteConfirm, getMultipleFilesOverwriteConfirm, IExplorerService } from 'vs/workbench/contrib/files/browser/files';
-import { BrowserFileUpload } from 'vs/workbench/contrib/files/browser/fileImport';
+import { IExplorerService } from 'vs/workbench/contrib/files/browser/files';
+import { BrowserFileImport, DesktopFileImport, getMultipleFilesOverwriteConfirm } from 'vs/workbench/contrib/files/browser/fileImportExport';
+import { toErrorMessage } from 'vs/base/common/errorMessage';
 
 export class ExplorerDelegate implements IListVirtualDelegate<ExplorerItem> {
 
@@ -763,7 +762,6 @@ export class FileDragAndDrop implements ITreeDragAndDrop<ExplorerItem> {
 	private dropEnabled = false;
 
 	constructor(
-		@INotificationService private notificationService: INotificationService,
 		@IExplorerService private explorerService: IExplorerService,
 		@IEditorService private editorService: IEditorService,
 		@IDialogService private dialogService: IDialogService,
@@ -771,7 +769,6 @@ export class FileDragAndDrop implements ITreeDragAndDrop<ExplorerItem> {
 		@IFileService private fileService: IFileService,
 		@IConfigurationService private configurationService: IConfigurationService,
 		@IInstantiationService private instantiationService: IInstantiationService,
-		@IHostService private hostService: IHostService,
 		@IWorkspaceEditingService private workspaceEditingService: IWorkspaceEditingService,
 		@IUriIdentityService private readonly uriIdentityService: IUriIdentityService
 	) {
@@ -969,117 +966,25 @@ export class FileDragAndDrop implements ITreeDragAndDrop<ExplorerItem> {
 			return;
 		}
 
-		// Desktop DND (Import file)
-		if (data instanceof NativeDragAndDropData) {
-			try {
+		try {
+
+			// Desktop DND (Import file)
+			if (data instanceof NativeDragAndDropData) {
 				if (isWeb) {
-					const browserFileUpload = this.instantiationService.createInstance(BrowserFileUpload);
-					await browserFileUpload.upload(target, originalEvent);
+					const browserFileUpload = this.instantiationService.createInstance(BrowserFileImport);
+					await browserFileUpload.import(target, originalEvent);
 				} else {
-					await this.handleExternalDrop(resolvedTarget, originalEvent, CancellationToken.None);
-				}
-			} catch (error) {
-				this.notificationService.warn(error);
-			}
-		}
-		// In-Explorer DND (Move/Copy file)
-		else {
-			this.handleExplorerDrop(data as ElementsDragAndDropData<ExplorerItem, ExplorerItem[]>, resolvedTarget, originalEvent).then(undefined, e => this.notificationService.warn(e));
-		}
-	}
-
-	private async handleExternalDrop(target: ExplorerItem, originalEvent: DragEvent, token: CancellationToken): Promise<void> {
-
-		// Check for dropped external files to be folders
-		const droppedResources = extractResources(originalEvent, true);
-		const result = await this.fileService.resolveAll(droppedResources.map(droppedResource => ({ resource: droppedResource.resource })));
-
-		if (token.isCancellationRequested) {
-			return;
-		}
-
-		// Pass focus to window
-		this.hostService.focus();
-
-		// Handle folders by adding to workspace if we are in workspace context and if dropped on top
-		const folders = result.filter(r => r.success && r.stat && r.stat.isDirectory).map(result => ({ uri: result.stat!.resource }));
-		if (folders.length > 0 && target.isRoot) {
-			const buttons = [
-				folders.length > 1 ? localize('copyFolders', "&&Copy Folders") : localize('copyFolder', "&&Copy Folder"),
-				localize('cancel', "Cancel")
-			];
-			const workspaceFolderSchemas = this.contextService.getWorkspace().folders.map(f => f.uri.scheme);
-			let message = folders.length > 1 ? localize('copyfolders', "Are you sure to want to copy folders?") : localize('copyfolder', "Are you sure to want to copy '{0}'?", basename(folders[0].uri));
-			if (folders.some(f => workspaceFolderSchemas.indexOf(f.uri.scheme) >= 0)) {
-				// We only allow to add a folder to the workspace if there is already a workspace folder with that scheme
-				buttons.unshift(folders.length > 1 ? localize('addFolders', "&&Add Folders to Workspace") : localize('addFolder', "&&Add Folder to Workspace"));
-				message = folders.length > 1 ? localize('dropFolders', "Do you want to copy the folders or add the folders to the workspace?")
-					: localize('dropFolder', "Do you want to copy '{0}' or add '{0}' as a folder to the workspace?", basename(folders[0].uri));
-			}
-
-			const { choice } = await this.dialogService.show(Severity.Info, message, buttons);
-			if (choice === buttons.length - 3) {
-				return this.workspaceEditingService.addFolders(folders);
-			}
-			if (choice === buttons.length - 2) {
-				return this.addResources(target, droppedResources.map(res => res.resource), token);
-			}
-
-			return undefined;
-		}
-
-		// Handle dropped files (only support FileStat as target)
-		else if (target instanceof ExplorerItem) {
-			return this.addResources(target, droppedResources.map(res => res.resource), token);
-		}
-	}
-
-	private async addResources(target: ExplorerItem, resources: URI[], token: CancellationToken): Promise<void> {
-		if (resources && resources.length > 0) {
-
-			// Resolve target to check for name collisions and ask user
-			const targetStat = await this.fileService.resolve(target.resource);
-
-			if (token.isCancellationRequested) {
-				return;
-			}
-
-			// Check for name collisions
-			const targetNames = new Set<string>();
-			const caseSensitive = this.fileService.hasCapability(target.resource, FileSystemProviderCapabilities.PathCaseSensitive);
-			if (targetStat.children) {
-				targetStat.children.forEach(child => {
-					targetNames.add(caseSensitive ? child.name : child.name.toLowerCase());
-				});
-			}
-
-			const resourcesFiltered = (await Promise.all(resources.map(async resource => {
-				if (targetNames.has(caseSensitive ? basename(resource) : basename(resource).toLowerCase())) {
-					const confirmationResult = await this.dialogService.confirm(getFileOverwriteConfirm(basename(resource)));
-					if (!confirmationResult.confirmed) {
-						return undefined;
-					}
-				}
-				return resource;
-			}))).filter(r => r instanceof URI) as URI[];
-			const resourceFileEdits = resourcesFiltered.map(resource => {
-				const sourceFileName = basename(resource);
-				const targetFile = joinPath(target.resource, sourceFileName);
-				return new ResourceFileEdit(resource, targetFile, { overwrite: true, copy: true });
-			});
-
-			await this.explorerService.applyBulkEdit(resourceFileEdits, {
-				undoLabel: resourcesFiltered.length === 1 ? localize('copyFile', "Copy {0}", basename(resourcesFiltered[0])) : localize('copynFile', "Copy {0} resources", resourcesFiltered.length),
-				progressLabel: resourcesFiltered.length === 1 ? localize('copyingFile', "Copying {0}", basename(resourcesFiltered[0])) : localize('copyingnFile', "Copying {0} resources", resourcesFiltered.length)
-			});
-
-			// if we only add one file, just open it directly
-			if (resourceFileEdits.length === 1) {
-				const item = this.explorerService.findClosest(resourceFileEdits[0].newResource!);
-				if (item && !item.isDirectory) {
-					this.editorService.openEditor({ resource: item.resource, options: { pinned: true } });
+					const desktopFileImport = this.instantiationService.createInstance(DesktopFileImport);
+					await desktopFileImport.import(resolvedTarget, originalEvent);
 				}
 			}
+
+			// In-Explorer DND (Move/Copy file)
+			else {
+				await this.handleExplorerDrop(data as ElementsDragAndDropData<ExplorerItem, ExplorerItem[]>, resolvedTarget, originalEvent);
+			}
+		} catch (error) {
+			this.dialogService.show(Severity.Error, toErrorMessage(error), [localize('ok', 'OK')]);
 		}
 	}
 
@@ -1121,15 +1026,15 @@ export class FileDragAndDrop implements ITreeDragAndDrop<ExplorerItem> {
 
 		const sources = items.filter(s => !s.isRoot);
 		if (isCopy) {
-			await this.doHandleExplorerDropOnCopy(sources, target);
-		} else {
-			return this.doHandleExplorerDropOnMove(sources, target);
+			return this.doHandleExplorerDropOnCopy(sources, target);
 		}
+
+		return this.doHandleExplorerDropOnMove(sources, target);
 	}
 
-	private doHandleRootDrop(roots: ExplorerItem[], target: ExplorerItem): Promise<void> {
+	private async doHandleRootDrop(roots: ExplorerItem[], target: ExplorerItem): Promise<void> {
 		if (roots.length === 0) {
-			return Promise.resolve(undefined);
+			return;
 		}
 
 		const folders = this.contextService.getWorkspace().folders;
@@ -1157,10 +1062,12 @@ export class FileDragAndDrop implements ITreeDragAndDrop<ExplorerItem> {
 		}
 
 		workspaceCreationData.splice(targetIndex, 0, ...rootsToMove);
+
 		return this.workspaceEditingService.updateFolders(0, workspaceCreationData.length, workspaceCreationData);
 	}
 
 	private async doHandleExplorerDropOnCopy(sources: ExplorerItem[], target: ExplorerItem): Promise<void> {
+
 		// Reuse duplicate action when user copies
 		const incrementalNaming = this.configurationService.getValue<IFilesConfiguration>().explorer.incrementalNaming;
 		const resourceFileEdits = sources.map(({ resource, isDirectory }) => (new ResourceFileEdit(resource, findValidPasteFileTarget(this.explorerService, target, { resource, isDirectory, allowOverwrite: false }, incrementalNaming), { copy: true })));
@@ -1191,6 +1098,7 @@ export class FileDragAndDrop implements ITreeDragAndDrop<ExplorerItem> {
 		try {
 			await this.explorerService.applyBulkEdit(resourceFileEdits, options);
 		} catch (error) {
+
 			// Conflict
 			if ((<FileOperationError>error).fileOperationResult === FileOperationResult.FILE_MOVE_CONFLICT) {
 
@@ -1201,20 +1109,17 @@ export class FileDragAndDrop implements ITreeDragAndDrop<ExplorerItem> {
 					}
 				}
 
-				const confirm = getMultipleFilesOverwriteConfirm(overwrites);
 				// Move with overwrite if the user confirms
+				const confirm = getMultipleFilesOverwriteConfirm(overwrites);
 				const { confirmed } = await this.dialogService.confirm(confirm);
 				if (confirmed) {
-					try {
-						await this.explorerService.applyBulkEdit(resourceFileEdits.map(re => new ResourceFileEdit(re.oldResource, re.newResource, { overwrite: true })), options);
-					} catch (error) {
-						this.notificationService.error(error);
-					}
+					await this.explorerService.applyBulkEdit(resourceFileEdits.map(re => new ResourceFileEdit(re.oldResource, re.newResource, { overwrite: true })), options);
 				}
 			}
-			// Any other error
+
+			// Any other error: bubble up
 			else {
-				this.notificationService.error(error);
+				throw error;
 			}
 		}
 	}

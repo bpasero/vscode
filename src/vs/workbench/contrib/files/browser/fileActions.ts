@@ -55,7 +55,7 @@ import { IUriIdentityService } from 'vs/workbench/services/uriIdentity/common/ur
 import { ResourceFileEdit } from 'vs/editor/browser/services/bulkEditService';
 import { IExplorerService } from 'vs/workbench/contrib/files/browser/files';
 import { listenStream } from 'vs/base/common/stream';
-import { BrowserFileUpload } from 'vs/workbench/contrib/files/browser/fileImport';
+import { BrowserFileImport } from 'vs/workbench/contrib/files/browser/fileImportExport';
 
 export const NEW_FILE_COMMAND_ID = 'explorer.newFile';
 export const NEW_FILE_LABEL = nls.localize('newFile', "New File");
@@ -1184,8 +1184,8 @@ const uploadFileHandler = async (accessor: ServicesAccessor) => {
 	const { files, disposable } = await triggerUpload();
 	try {
 		if (files) {
-			const browserUpload = instantiationService.createInstance(BrowserFileUpload);
-			await browserUpload.upload(element, files);
+			const browserImport = instantiationService.createInstance(BrowserFileImport);
+			await browserImport.import(element, files);
 		}
 	} finally {
 		disposable.dispose();
