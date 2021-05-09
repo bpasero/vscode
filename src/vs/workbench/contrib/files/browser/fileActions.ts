@@ -37,7 +37,7 @@ import { CLOSE_EDITORS_AND_GROUP_COMMAND_ID } from 'vs/workbench/browser/parts/e
 import { coalesce } from 'vs/base/common/arrays';
 import { ExplorerItem, NewExplorerItem } from 'vs/workbench/contrib/files/common/explorerModel';
 import { getErrorMessage } from 'vs/base/common/errors';
-import { WebFileSystemAccess, triggerDownload } from 'vs/base/browser/dom';
+import { WebFileSystemAccess, triggerDownload, triggerUpload } from 'vs/base/browser/dom';
 import { mnemonicButtonLabel } from 'vs/base/common/labels';
 import { IFilesConfigurationService } from 'vs/workbench/services/filesConfiguration/common/filesConfigurationService';
 import { IWorkingCopyService } from 'vs/workbench/services/workingCopy/common/workingCopyService';
@@ -55,6 +55,7 @@ import { IUriIdentityService } from 'vs/workbench/services/uriIdentity/common/ur
 import { ResourceFileEdit } from 'vs/editor/browser/services/bulkEditService';
 import { IExplorerService } from 'vs/workbench/contrib/files/browser/files';
 import { listenStream } from 'vs/base/common/stream';
+import { BrowserFileUpload } from 'vs/workbench/contrib/files/browser/fileImport';
 
 export const NEW_FILE_COMMAND_ID = 'explorer.newFile';
 export const NEW_FILE_LABEL = nls.localize('newFile', "New File");
@@ -65,7 +66,10 @@ export const MOVE_FILE_TO_TRASH_LABEL = nls.localize('delete', "Delete");
 export const COPY_FILE_LABEL = nls.localize('copyFile', "Copy");
 export const PASTE_FILE_LABEL = nls.localize('pasteFile', "Paste");
 export const FileCopiedContext = new RawContextKey<boolean>('fileCopied', false);
+export const DOWNLOAD_COMMAND_ID = 'explorer.download';
 export const DOWNLOAD_LABEL = nls.localize('download', "Download...");
+export const UPLOAD_COMMAND_ID = 'explorer.upload';
+export const UPLOAD_LABEL = nls.localize('upload', "Upload...");
 const CONFIRM_DELETE_SETTING_KEY = 'explorer.confirmDelete';
 const MAX_UNDO_FILE_SIZE = 5000000; // 5mb
 
@@ -930,7 +934,6 @@ export const cutFileHandler = async (accessor: ServicesAccessor) => {
 	}
 };
 
-export const DOWNLOAD_COMMAND_ID = 'explorer.download';
 const downloadFileHandler = async (accessor: ServicesAccessor) => {
 	const logService = accessor.get(ILogService);
 	const fileService = accessor.get(IFileService);
@@ -1169,6 +1172,29 @@ const downloadFileHandler = async (accessor: ServicesAccessor) => {
 CommandsRegistry.registerCommand({
 	id: DOWNLOAD_COMMAND_ID,
 	handler: downloadFileHandler
+});
+
+const uploadFileHandler = async (accessor: ServicesAccessor) => {
+	const explorerService = accessor.get(IExplorerService);
+	const instantiationService = accessor.get(IInstantiationService);
+
+	const context = explorerService.getContext(true);
+	const element = context.length ? context[0] : explorerService.roots[0];
+
+	const { files, disposable } = await triggerUpload();
+	try {
+		if (files) {
+			const browserUpload = instantiationService.createInstance(BrowserFileUpload);
+			await browserUpload.upload(element, files);
+		}
+	} finally {
+		disposable.dispose();
+	}
+};
+
+CommandsRegistry.registerCommand({
+	id: UPLOAD_COMMAND_ID,
+	handler: uploadFileHandler
 });
 
 export const pasteFileHandler = async (accessor: ServicesAccessor) => {

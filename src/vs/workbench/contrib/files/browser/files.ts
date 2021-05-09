@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { localize } from 'vs/nls';
 import { URI } from 'vs/base/common/uri';
 import { IListService } from 'vs/platform/list/browser/listService';
 import { OpenEditor, ISortOrderConfiguration } from 'vs/workbench/contrib/files/common/files';
@@ -17,6 +18,8 @@ import { IEditableData } from 'vs/workbench/common/views';
 import { createDecorator } from 'vs/platform/instantiation/common/instantiation';
 import { ResourceFileEdit } from 'vs/editor/browser/services/bulkEditService';
 import { ProgressLocation } from 'vs/platform/progress/common/progress';
+import { getFileNamesMessage, IConfirmation } from 'vs/platform/dialogs/common/dialogs';
+import { basename } from 'vs/base/common/resources';
 
 export interface IExplorerService {
 	readonly _serviceBrand: undefined;
@@ -154,4 +157,26 @@ export function getOpenEditorsViewMultiSelection(listService: IListService, edit
 	}
 
 	return undefined;
+}
+
+export function getFileOverwriteConfirm(name: string): IConfirmation {
+	return {
+		message: localize('confirmOverwrite', "A file or folder with the name '{0}' already exists in the destination folder. Do you want to replace it?", name),
+		detail: localize('irreversible', "This action is irreversible!"),
+		primaryButton: localize({ key: 'replaceButtonLabel', comment: ['&& denotes a mnemonic'] }, "&&Replace"),
+		type: 'warning'
+	};
+}
+
+export function getMultipleFilesOverwriteConfirm(files: URI[]): IConfirmation {
+	if (files.length > 1) {
+		return {
+			message: localize('confirmManyOverwrites', "The following {0} files and/or folders already exist in the destination folder. Do you want to replace them?", files.length),
+			detail: getFileNamesMessage(files) + '\n' + localize('irreversible', "This action is irreversible!"),
+			primaryButton: localize({ key: 'replaceButtonLabel', comment: ['&& denotes a mnemonic'] }, "&&Replace"),
+			type: 'warning'
+		};
+	}
+
+	return getFileOverwriteConfirm(basename(files[0]));
 }
