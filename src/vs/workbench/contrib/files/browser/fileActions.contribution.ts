@@ -491,7 +491,12 @@ MenuRegistry.appendMenuItem(MenuId.ExplorerContext, ({
 		id: UPLOAD_COMMAND_ID,
 		title: UPLOAD_LABEL,
 	},
-	when: ContextKeyExpr.and(IsWebContext, ExplorerFolderContext)
+	when: ContextKeyExpr.and(
+		// only in web
+		IsWebContext,
+		// only on folders
+		ExplorerFolderContext
+	)
 }));
 
 MenuRegistry.appendMenuItem(MenuId.ExplorerContext, ({
