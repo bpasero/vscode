@@ -9,7 +9,7 @@ import { isFunction, isObject, isArray, assertIsDefined, withUndefinedAsNull } f
 import { IDiffEditor } from 'vs/editor/browser/editorBrowser';
 import { IDiffEditorOptions, IEditorOptions as ICodeEditorOptions } from 'vs/editor/common/config/editorOptions';
 import { BaseTextEditor, IEditorConfiguration } from 'vs/workbench/browser/parts/editor/textEditor';
-import { TextEditorOptions, EditorInput, EditorOptions, TEXT_DIFF_EDITOR_ID, IEditorInputFactoryRegistry, EditorExtensions, ITextDiffEditorPane, IEditorInput, IEditorOpenContext } from 'vs/workbench/common/editor';
+import { TextEditorOptions, EditorOptions, TEXT_DIFF_EDITOR_ID, IEditorInputFactoryRegistry, EditorExtensions, ITextDiffEditorPane, IEditorInput, IEditorOpenContext } from 'vs/workbench/common/editor';
 import { DiffEditorInput } from 'vs/workbench/common/editor/diffEditorInput';
 import { DiffNavigator } from 'vs/editor/browser/widget/diffNavigator';
 import { DiffEditorWidget } from 'vs/editor/browser/widget/diffEditorWidget';
@@ -106,7 +106,7 @@ export class TextDiffEditor extends BaseTextEditor implements ITextDiffEditorPan
 		return this.instantiationService.createInstance(DiffEditorWidget, parent, configuration, {});
 	}
 
-	override async setInput(input: EditorInput, options: EditorOptions | undefined, context: IEditorOpenContext, token: CancellationToken): Promise<void> {
+	override async setInput(input: DiffEditorInput, options: EditorOptions | undefined, context: IEditorOpenContext, token: CancellationToken): Promise<void> {//
 
 		// Dispose previous diff navigator
 		this.diffNavigatorDisposables.clear();
@@ -173,62 +173,56 @@ export class TextDiffEditor extends BaseTextEditor implements ITextDiffEditorPan
 		}
 	}
 
-	private restoreTextDiffEditorViewState(editor: EditorInput, control: IDiffEditor): boolean {
-		if (editor instanceof DiffEditorInput) {
-			const resource = this.toDiffEditorViewStateResource(editor);
-			if (resource) {
-				const viewState = this.loadTextEditorViewState(resource);
-				if (viewState) {
-					control.restoreViewState(viewState);
+	private restoreTextDiffEditorViewState(editor: DiffEditorInput, control: IDiffEditor): boolean {
+		const resource = this.toDiffEditorViewStateResource(editor);
+		if (resource) {
+			const viewState = this.loadTextEditorViewState(resource);
+			if (viewState) {
+				control.restoreViewState(viewState);
 
-					return true;
-				}
+				return true;
 			}
 		}
 
 		return false;
 	}
 
-	private openAsBinary(input: EditorInput, options: EditorOptions | undefined): boolean {
-		if (input instanceof DiffEditorInput) {
-			const originalInput = input.originalInput;
-			const modifiedInput = input.modifiedInput;
+	private openAsBinary(input: DiffEditorInput, options: EditorOptions | undefined): boolean {
+		const originalInput = input.originalInput;
+		const modifiedInput = input.modifiedInput;
 
-			const binaryDiffInput = this.instantiationService.createInstance(DiffEditorInput, input.getName(), input.getDescription(), originalInput, modifiedInput, true);
+		const binaryDiffInput = this.instantiationService.createInstance(DiffEditorInput, input.getName(), input.getDescription(), originalInput, modifiedInput, true);
 
-			// Forward binary flag to input if supported
-			const fileEditorInputFactory = Registry.as<IEditorInputFactoryRegistry>(EditorExtensions.EditorInputFactories).getFileEditorInputFactory();
-			if (fileEditorInputFactory.isFileEditorInput(originalInput)) {
-				originalInput.setForceOpenAsBinary();
-			}
-
-			if (fileEditorInputFactory.isFileEditorInput(modifiedInput)) {
-				modifiedInput.setForceOpenAsBinary();
-			}
-
-			// Make sure to not steal away the currently active group
-			// because we are triggering another openEditor() call
-			// and do not control the initial intent that resulted
-			// in us now opening as binary.
-			const preservingOptions: IEditorOptions = {
-				activation: EditorActivation.PRESERVE,
-				pinned: this.group?.isPinned(input),
-				sticky: this.group?.isSticky(input)
-			};
-
-			if (options) {
-				options.overwrite(preservingOptions);
-			} else {
-				options = EditorOptions.create(preservingOptions);
-			}
-
-			// Replace this editor with the binary one
-			this.editorService.replaceEditors([{ editor: input, replacement: binaryDiffInput, options }], this.group || ACTIVE_GROUP);
-
-			return true;
+		// Forward binary flag to input if supported
+		const fileEditorInputFactory = Registry.as<IEditorInputFactoryRegistry>(EditorExtensions.EditorInputFactories).getFileEditorInputFactory();
+		if (fileEditorInputFactory.isFileEditorInput(originalInput)) {
+			originalInput.setForceOpenAsBinary();
 		}
 
-		return false;
+		if (fileEditorInputFactory.isFileEditorInput(modifiedInput)) {
+			modifiedInput.setForceOpenAsBinary();
+		}
+
+		// Make sure to not steal away the currently active group
+		// because we are triggering another openEditor() call
+		// and do not control the initial intent that resulted
+		// in us now opening as binary.
+		const preservingOptions: IEditorOptions = {
+			activation: EditorActivation.PRESERVE,
+			pinned: this.group?.isPinned(input),
+			sticky: this.group?.isSticky(input)
+		};
+
+		if (options) {
+			options.overwrite(preservingOptions);
+		} else {
+			options = EditorOptions.create(preservingOptions);
+		}
+
+		// Replace this editor with the binary one
+		this.editorService.replaceEditors([{ editor: input, replacement: binaryDiffInput, options }], this.group || ACTIVE_GROUP);
+
+		return true;
 	}
 
 	protected override computeConfiguration(configuration: IEditorConfiguration): ICodeEditorOptions {
