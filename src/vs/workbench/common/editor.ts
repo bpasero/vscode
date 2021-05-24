@@ -552,6 +552,15 @@ export interface IEditorInput extends IDisposable {
 	copy(): IEditorInput;
 
 	/**
+	 * Returns a representation of this typed editor input as untyped
+	 * resource editor input that e.g. can be used to serialize the
+	 * editor input into a form that it can be restored.
+	 *
+	 * May return `undefined` if a untyped representatin is not supported.
+	 */
+	asResourceEditorInput(groupId: GroupIdentifier): IResourceEditorInput | undefined;
+
+	/**
 	 * Returns if the other object matches this input.
 	 */
 	matches(other: unknown): boolean;
@@ -668,6 +677,10 @@ export abstract class EditorInput extends Disposable implements IEditorInput {
 	 */
 	prefersEditor<T extends IEditorDescriptor<IEditorPane>>(editors: T[]): T | undefined {
 		return firstOrDefault(editors);
+	}
+
+	asResourceEditorInput(groupId: GroupIdentifier): IResourceEditorInput | undefined {
+		return undefined;
 	}
 
 	isDisposed(): boolean {

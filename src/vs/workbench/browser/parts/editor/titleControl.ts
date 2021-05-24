@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import 'vs/css!./media/titlecontrol';
+import { localize } from 'vs/nls';
 import { applyDragImage, DataTransfers } from 'vs/base/browser/dnd';
 import { addDisposableListener, Dimension, EventType } from 'vs/base/browser/dom';
 import { StandardMouseEvent } from 'vs/base/browser/mouseEvent';
@@ -13,7 +14,7 @@ import { IAction, WorkbenchActionExecutedEvent, WorkbenchActionExecutedClassific
 import { ResolvedKeybinding } from 'vs/base/common/keyCodes';
 import { dispose, DisposableStore } from 'vs/base/common/lifecycle';
 import { isCodeEditor } from 'vs/editor/browser/editorBrowser';
-import { localize } from 'vs/nls';
+import { ResourceMap } from 'vs/base/common/map';
 import { createActionViewItem, createAndFillInActionBarActions, createAndFillInContextMenuActions } from 'vs/platform/actions/browser/menuEntryActionViewItem';
 import { IMenu, IMenuService, MenuId } from 'vs/platform/actions/common/actions';
 import { IConfigurationService } from 'vs/platform/configuration/common/configuration';
@@ -31,7 +32,7 @@ import { EditorPane } from 'vs/workbench/browser/parts/editor/editorPane';
 import { BreadcrumbsConfig } from 'vs/workbench/browser/parts/editor/breadcrumbs';
 import { BreadcrumbsControl, IBreadcrumbsControlOptions } from 'vs/workbench/browser/parts/editor/breadcrumbsControl';
 import { IEditorGroupsAccessor, IEditorGroupTitleHeight, IEditorGroupView } from 'vs/workbench/browser/parts/editor/editor';
-import { EditorCommandsContextActionRunner, IEditorCommandsContext, IEditorInput, EditorResourceAccessor, IEditorPartOptions, SideBySideEditor, ActiveEditorPinnedContext, ActiveEditorStickyContext } from 'vs/workbench/common/editor';
+import { EditorCommandsContextActionRunner, IEditorCommandsContext, IEditorInput, EditorResourceAccessor, IEditorPartOptions, SideBySideEditor, ActiveEditorPinnedContext, ActiveEditorStickyContext, EditorsOrder } from 'vs/workbench/common/editor';
 import { ResourceContextKey } from 'vs/workbench/common/resources';
 import { AnchorAlignment } from 'vs/base/browser/ui/contextview/contextview';
 import { IFileService } from 'vs/platform/files/common/files';
@@ -254,11 +255,17 @@ export abstract class TitleControl extends Themable {
 				e.dataTransfer.effectAllowed = 'copyMove';
 			}
 
-			// If tabs are disabled, treat dragging as if an editor tab was dragged
+			// Drag all tabs of the group if tabs are enabled
 			let hasDataTransfer = false;
-			if (!this.accessor.partOptions.showTabs) {
+			if (this.accessor.partOptions.showTabs) {
+				hasDataTransfer = this.doFillResourceDataTransfers(this.group.getEditors(EditorsOrder.SEQUENTIAL), e);
+
+			}
+
+			// Otherwise only drag the active editor
+			else {
 				if (this.group.activeEditor) {
-					hasDataTransfer = this.doFillResourceDataTransfers(this.group.activeEditor, e);
+					hasDataTransfer = this.doFillResourceDataTransfers([this.group.activeEditor], e);
 				}
 			}
 
@@ -284,37 +291,35 @@ export abstract class TitleControl extends Themable {
 		}));
 	}
 
-	protected doFillResourceDataTransfers(editor: IEditorInput, e: DragEvent): boolean {
-		const resource = EditorResourceAccessor.getOriginalUri(editor, { supportSideBySide: SideBySideEditor.PRIMARY });
-		if (!resource) {
-			return false;
-		}
+	protected doFillResourceDataTransfers(editors: readonly IEditorInput[], e: DragEvent): boolean {
+		const mapResourceToOptions = new ResourceMap<ITextEditorOptions | undefined>();
+		for (const editor of editors) {
+			const resourceEditorInput = editor.asResourceEditorInput(this.group.id);
+			if (resourceEditorInput) {
+				mapResourceToOptions.set(resourceEditorInput.resource, {
+					sticky: this.group.isSticky(editor),
+					viewState: (() => {
+						if (this.group.activeEditor === editor) {
+							const activeControl = this.group.activeEditorPane?.getControl();
+							if (isCodeEditor(activeControl)) {
+								return withNullAsUndefined(activeControl.saveViewState());
+							}
+						}
 
-		let editorOptions: ITextEditorOptions = {
-			viewState: (() => {
-				if (this.group.activeEditor === editor) {
-					const activeControl = this.group.activeEditorPane?.getControl();
-					if (isCodeEditor(activeControl)) {
-						return withNullAsUndefined(activeControl.saveViewState());
-					}
-				}
-
-				return undefined;
-			})(),
-			sticky: this.group.isSticky(editor)
-		};
-
-		// If it's a custom editor or a notebook add the viewtype
-		if ((editor as object).hasOwnProperty('viewType')) {
-			interface EditorInputWithViewType extends IEditorInput {
-				viewType: string;
+						return undefined;
+					})(),
+					...resourceEditorInput.options
+				});
 			}
-			editorOptions = { ...editorOptions, override: (editor as EditorInputWithViewType).viewType };
 		}
 
-		this.instantiationService.invokeFunction(fillResourceDataTransfers, [resource], () => editorOptions, e);
+		if (mapResourceToOptions.size > 0) {
+			this.instantiationService.invokeFunction(fillResourceDataTransfers, Array.from(mapResourceToOptions.keys()), resource => mapResourceToOptions.get(resource), e);
 
-		return true;
+			return true;
+		}
+
+		return false;
 	}
 
 	protected onContextMenu(editor: IEditorInput, e: Event, node: HTMLElement): void {
