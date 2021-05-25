@@ -13,8 +13,6 @@ import { ToolBar } from 'vs/base/browser/ui/toolbar/toolbar';
 import { IAction, WorkbenchActionExecutedEvent, WorkbenchActionExecutedClassification, SubmenuAction } from 'vs/base/common/actions';
 import { ResolvedKeybinding } from 'vs/base/common/keyCodes';
 import { dispose, DisposableStore } from 'vs/base/common/lifecycle';
-import { isCodeEditor } from 'vs/editor/browser/editorBrowser';
-import { ResourceMap } from 'vs/base/common/map';
 import { createActionViewItem, createAndFillInActionBarActions, createAndFillInContextMenuActions } from 'vs/platform/actions/browser/menuEntryActionViewItem';
 import { IMenu, IMenuService, MenuId } from 'vs/platform/actions/common/actions';
 import { IConfigurationService } from 'vs/platform/configuration/common/configuration';
@@ -38,7 +36,6 @@ import { AnchorAlignment } from 'vs/base/browser/ui/contextview/contextview';
 import { IFileService } from 'vs/platform/files/common/files';
 import { withNullAsUndefined, withUndefinedAsNull, assertIsDefined } from 'vs/base/common/types';
 import { isFirefox } from 'vs/base/browser/browser';
-import { ITextEditorOptions } from 'vs/platform/editor/common/editor';
 import { isPromiseCanceledError } from 'vs/base/common/errors';
 
 export interface IToolbarActions {
@@ -259,7 +256,6 @@ export abstract class TitleControl extends Themable {
 			let hasDataTransfer = false;
 			if (this.accessor.partOptions.showTabs) {
 				hasDataTransfer = this.doFillResourceDataTransfers(this.group.getEditors(EditorsOrder.SEQUENTIAL), e);
-
 			}
 
 			// Otherwise only drag the active editor
@@ -292,29 +288,8 @@ export abstract class TitleControl extends Themable {
 	}
 
 	protected doFillResourceDataTransfers(editors: readonly IEditorInput[], e: DragEvent): boolean {
-		const mapResourceToOptions = new ResourceMap<ITextEditorOptions | undefined>();
-		for (const editor of editors) {
-			const resourceEditorInput = editor.asResourceEditorInput(this.group.id);
-			if (resourceEditorInput) {
-				mapResourceToOptions.set(resourceEditorInput.resource, {
-					sticky: this.group.isSticky(editor),
-					viewState: (() => {
-						if (this.group.activeEditor === editor) {
-							const activeControl = this.group.activeEditorPane?.getControl();
-							if (isCodeEditor(activeControl)) {
-								return withNullAsUndefined(activeControl.saveViewState());
-							}
-						}
-
-						return undefined;
-					})(),
-					...resourceEditorInput.options
-				});
-			}
-		}
-
-		if (mapResourceToOptions.size > 0) {
-			this.instantiationService.invokeFunction(fillResourceDataTransfers, Array.from(mapResourceToOptions.keys()), resource => mapResourceToOptions.get(resource), e);
+		if (editors.length) {
+			this.instantiationService.invokeFunction(fillResourceDataTransfers, editors.map(editor => ({ editor, groupId: this.group.id })), e);
 
 			return true;
 		}

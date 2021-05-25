@@ -13,7 +13,7 @@ import { URI } from 'vs/base/common/uri';
 import { ITextFileService } from 'vs/workbench/services/textfile/common/textfiles';
 import { bufferToReadable, VSBuffer } from 'vs/base/common/buffer';
 import { FileAccess, Schemas } from 'vs/base/common/network';
-import { ITextEditorOptions } from 'vs/platform/editor/common/editor';
+import { IResourceEditorInput, ITextEditorOptions } from 'vs/platform/editor/common/editor';
 import { DataTransfers, IDragAndDropData } from 'vs/base/browser/dnd';
 import { DragMouseEvent } from 'vs/base/browser/mouseEvent';
 import { normalizeDriveLetter } from 'vs/base/common/labels';
@@ -21,17 +21,18 @@ import { MIME_BINARY } from 'vs/base/common/mime';
 import { isWindows } from 'vs/base/common/platform';
 import { ServicesAccessor } from 'vs/platform/instantiation/common/instantiation';
 import { isCodeEditor } from 'vs/editor/browser/editorBrowser';
-import { IEditorIdentifier, GroupIdentifier, IEditorInputFactoryRegistry, EditorExtensions } from 'vs/workbench/common/editor';
+import { IEditorIdentifier, GroupIdentifier, IEditorInputFactoryRegistry, EditorExtensions, isEditorIdentifier } from 'vs/workbench/common/editor';
 import { IEditorService, IResourceEditorInputType } from 'vs/workbench/services/editor/common/editorService';
 import { Disposable, IDisposable, DisposableStore } from 'vs/base/common/lifecycle';
 import { addDisposableListener, EventType } from 'vs/base/browser/dom';
-import { IEditorGroup } from 'vs/workbench/services/editor/common/editorGroupsService';
+import { IEditorGroup, IEditorGroupsService } from 'vs/workbench/services/editor/common/editorGroupsService';
 import { IWorkspaceEditingService } from 'vs/workbench/services/workspaces/common/workspaceEditing';
 import { withNullAsUndefined } from 'vs/base/common/types';
 import { IHostService } from 'vs/workbench/services/host/browser/host';
 import { IWorkingCopyBackupService } from 'vs/workbench/services/workingCopy/common/workingCopyBackup';
 import { Emitter } from 'vs/base/common/event';
 import { NO_TYPE_ID } from 'vs/workbench/services/workingCopy/common/workingCopy';
+import { coalesce } from 'vs/base/common/arrays';
 
 export interface IDraggedResource {
 	resource: URI;
@@ -305,71 +306,112 @@ export class ResourcesDropHandler {
 	}
 }
 
-export function fillResourceDataTransfers(accessor: ServicesAccessor, resources: (URI | { resource: URI, isDirectory: boolean })[], optionsCallback: ((resource: URI) => ITextEditorOptions | undefined) | undefined, event: DragMouseEvent | DragEvent): void {
-	if (resources.length === 0 || !event.dataTransfer) {
+interface IResourceStat {
+	resource: URI;
+	isDirectory?: boolean;
+}
+
+export function fillResourceDataTransfers(accessor: ServicesAccessor, resources: URI[], event: DragMouseEvent | DragEvent): void;
+export function fillResourceDataTransfers(accessor: ServicesAccessor, resources: IResourceStat[], event: DragMouseEvent | DragEvent): void;
+export function fillResourceDataTransfers(accessor: ServicesAccessor, editors: IEditorIdentifier[], event: DragMouseEvent | DragEvent): void;
+export function fillResourceDataTransfers(accessor: ServicesAccessor, resourcesOrEditors: Array<URI | IResourceStat | IEditorIdentifier>, event: DragMouseEvent | DragEvent): void {
+	if (resourcesOrEditors.length === 0 || !event.dataTransfer) {
 		return;
 	}
 
-	const sources = resources.map(obj => {
-		if (URI.isUri(obj)) {
-			return { resource: obj, isDirectory: false /* assume resource is not a directory */ };
+	// Extract resources from URIs or Editors
+	const resources: IResourceStat[] = coalesce(resourcesOrEditors.map(resourceOrEditor => {
+		if (URI.isUri(resourceOrEditor)) {
+			return { resource: resourceOrEditor };
 		}
 
-		return obj;
-	});
+		if (isEditorIdentifier(resourceOrEditor)) {
+			if (resourceOrEditor.editor.resource) {
+				return { resource: resourceOrEditor.editor.resource };
+			}
+
+			return undefined; // editor without resource
+		}
+
+		return resourceOrEditor;
+	}));
 
 	// Text: allows to paste into text-capable areas
 	const lineDelimiter = isWindows ? '\r\n' : '\n';
-	event.dataTransfer.setData(DataTransfers.TEXT, sources.map(source => source.resource.scheme === Schemas.file ? normalize(normalizeDriveLetter(source.resource.fsPath)) : source.resource.toString()).join(lineDelimiter));
+	event.dataTransfer.setData(DataTransfers.TEXT, resources.map(({ resource }) => resource.scheme === Schemas.file ? normalize(normalizeDriveLetter(resource.fsPath)) : resource.toString()).join(lineDelimiter));
 
 	// Download URL: enables support to drag a tab as file to desktop (only single file supported)
-	if (!sources[0].isDirectory) {
-		event.dataTransfer.setData(DataTransfers.DOWNLOAD_URL, [MIME_BINARY, basename(sources[0].resource), FileAccess.asBrowserUri(sources[0].resource).toString()].join(':'));
+	const firstFile = resources.find(resource => !resource.isDirectory);
+	if (firstFile) {
+		event.dataTransfer.setData(DataTransfers.DOWNLOAD_URL, [MIME_BINARY, basename(firstFile.resource), FileAccess.asBrowserUri(firstFile.resource).toString()].join(':'));
 	}
 
 	// Resource URLs: allows to drop multiple resources to a target in VS Code (not directories)
-	const files = sources.filter(source => !source.isDirectory);
+	const files = resources.filter(resource => !resource.isDirectory);
 	if (files.length) {
-		event.dataTransfer.setData(DataTransfers.RESOURCES, JSON.stringify(files.map(file => file.resource.toString())));
+		event.dataTransfer.setData(DataTransfers.RESOURCES, JSON.stringify(files.map(({ resource }) => resource.toString())));
 	}
 
-	// Editors: enables cross window DND of tabs into the editor area
+	// Editors: enables cross window DND of editors
+	// into the editor area while presering UI state
 	const textFileService = accessor.get(ITextFileService);
 	const editorService = accessor.get(IEditorService);
+	const editorGroupService = accessor.get(IEditorGroupsService);
 
 	const draggedEditors: ISerializedDraggedEditor[] = [];
-	files.forEach(file => {
-		let options: ITextEditorOptions | undefined = undefined;
 
-		// Use provided callback for editor options
-		if (typeof optionsCallback === 'function') {
-			options = optionsCallback(file.resource);
-		}
+	for (const resourceOrEditor of resourcesOrEditors) {
 
-		// Otherwise try to figure out the view state from opened editors that match
-		else {
-			options = {
-				viewState: (() => {
-					const textEditorControls = editorService.visibleTextEditorControls;
-					for (const textEditorControl of textEditorControls) {
-						if (isCodeEditor(textEditorControl)) {
-							const model = textEditorControl.getModel();
-							if (isEqual(model?.uri, file.resource)) {
-								return withNullAsUndefined(textEditorControl.saveViewState());
-							}
-						}
+		// Extract resource editor from provided object or URI
+		let editor: IResourceEditorInput;
+		if (isEditorIdentifier(resourceOrEditor)) {
+			const editorCandidate = resourceOrEditor.editor.asResourceEditorInput(resourceOrEditor.groupId);
+			if (!editorCandidate) {
+				return; // not transferable editor (not serializable)
+			}
+
+			editor = editorCandidate;
+
+			if (!editor.options?.viewState) {
+				const group = editorGroupService.getGroup(resourceOrEditor.groupId);
+				if (group?.activeEditor === resourceOrEditor.editor) {
+					const activeControl = group.activeEditorPane?.getControl();
+					if (isCodeEditor(activeControl)) {
+						editor.options = {
+							...editor.options,
+							viewState: withNullAsUndefined(activeControl.saveViewState())
+						};
 					}
+				}
+			}
+		} else {
+			const editorCandidate = URI.isUri(resourceOrEditor) ? { resource: resourceOrEditor } : !resourceOrEditor.isDirectory ? { resource: resourceOrEditor.resource } : undefined;
+			if (!editorCandidate) {
+				return; // not transferable editor (directory)
+			}
 
-					return undefined;
-				})()
-			};
+			editor = editorCandidate;
+
+			for (const textEditorControl of editorService.visibleTextEditorControls) {
+				if (isCodeEditor(textEditorControl)) {
+					const model = textEditorControl.getModel();
+					if (isEqual(model?.uri, editor.resource)) {
+						editor.options = {
+							...editor.options,
+							viewState: withNullAsUndefined(textEditorControl.saveViewState())
+						};
+
+						break;
+					}
+				}
+			}
 		}
 
-		// Try to find encoding and mode from text model
+		// Try to find encoding and mode from text model if any
 		let encoding: string | undefined = undefined;
 		let mode: string | undefined = undefined;
 
-		const model = file.resource.scheme === Schemas.untitled ? textFileService.untitled.get(file.resource) : textFileService.files.get(file.resource);
+		const model = editor.resource.scheme === Schemas.untitled ? textFileService.untitled.get(editor.resource) : textFileService.files.get(editor.resource);
 		if (model) {
 			encoding = model.getEncoding();
 			mode = model.getMode();
@@ -383,8 +425,8 @@ export function fillResourceDataTransfers(accessor: ServicesAccessor, resources:
 		}
 
 		// Add as dragged editor
-		draggedEditors.push({ resource: file.resource.toString(), dirtyContent, options, encoding, mode });
-	});
+		draggedEditors.push({ resource: editor.resource.toString(), dirtyContent, options: editor.options, encoding, mode });
+	}
 
 	if (draggedEditors.length) {
 		event.dataTransfer.setData(CodeDataTransfers.EDITORS, JSON.stringify(draggedEditors));
