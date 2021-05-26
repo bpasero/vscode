@@ -49,8 +49,18 @@
     },
     {
       "file": "src/vs/workbench/contrib/textAreaEditor/browser/textAreaEditor.ts",
-      "description": "The `TextAreaControl` is the owner of the `<textarea>` element and will \"bind\" our text model to the UI control. Whenever the model changes, the text area should update and whenever the user types, the model should receive these changes. We will take a closer look at the \"model\" later when we touch on \"working copies\".",
-      "line": 69
+      "description": "The `TextAreaControl` is the owner of the `<textarea>` element and will \"bind\" our text model to the UI control. Whenever the model changes, the text area should update and whenever the user types, the model should receive these changes. We will take a closer look at the \"model\" later when we touch on \"working copies\".\n\n**Note:** you do not have to separate the \"control\" from the \"editor\", this is up to you. In this example the two are decoupled just to keep the code easier to understand.",
+      "line": 69,
+      "selection": {
+        "start": {
+          "line": 69,
+          "character": 1
+        },
+        "end": {
+          "line": 69,
+          "character": 6
+        }
+      }
     },
     {
       "file": "src/vs/workbench/contrib/textAreaEditor/browser/textAreaEditor.ts",
@@ -59,13 +69,23 @@
     },
     {
       "file": "src/vs/workbench/contrib/textAreaEditor/browser/textAreaEditorInput.ts",
-      "description": "Next up is a closer look into the `TextAreaEditorInput`. The idea of editor inputs is to provide different inputs to the same editor. In this case, the text area editor input is identified by a resource (`URI`) on the file system. For example, when the user clicks on a file `Readme.md`, a `TextAreaEditorInput` is being created with the file as resource property. ",
+      "description": "Next up is a closer look into the `TextAreaEditorInput`. The idea of editor inputs is to provide different inputs to the same editor. In this case, the text area editor input is identified by a resource (`URI`) on the file system. For example, when the user clicks on a file `Readme.md`, a `TextAreaEditorInput` is being created with the file as resource property. \n\nWe extend `AbstractResourceEditorInput` to benefit from some standard implementations for all inputs that are resource based (e.g. how to compute a editor label from the resource).",
       "line": 21
     },
     {
       "file": "src/vs/workbench/contrib/textAreaEditor/browser/textAreaEditorInput.ts",
       "description": "The `resolve` method is long running and will only be called when the text area editor input is about to be displayed in the text area editor. The role of this method is to fetch the underlying contents of the file to display and return that.\n\nEvery editor is free to come up with their own way of resolving an editor input but to make it easy to implement editors that show inputs that have a representation on disk, file working copies have been introduced. Working copies are the minimal interface everyone has to implement to introduce something into the workbench that can be edited, saved and reverted. As such, it makes sense that editor inputs `resolve` to a working copy. The file working copy is an implementation of working copies based on the assumption that the contents can be saved and retrieved from the file system and they provide lots of functionality already out of the box.\n\nBy providing built in helpers for file working copies, the implementation becomes a lot simpler compared to implementing the entire working copy interface yourself.",
       "line": 97
+    },
+    {
+      "file": "src/vs/workbench/contrib/textAreaEditor/browser/textAreaEditorInput.ts",
+      "description": "For methods such as `save` or `revert` we just delegate to the working copy directly and let it handle it for us. No code needed from our end to implement this!",
+      "line": 122
+    },
+    {
+      "file": "src/vs/workbench/contrib/textAreaEditor/browser/textAreaEditorInput.ts",
+      "description": "The `saveAs` is a bit special in that it will return a new file working copy, so here we go through the file working copy manager and then create a new text area editor input from the result.",
+      "line": 127
     },
     {
       "file": "src/vs/workbench/contrib/textAreaEditor/browser/textAreaEditorInput.ts",
