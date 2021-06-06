@@ -37,7 +37,7 @@ export interface IAccountUsage {
 	lastUsed: number;
 }
 
-const VSO_ALLOWED_EXTENSIONS = ['github.vscode-pull-request-github', 'github.vscode-pull-request-github-insiders', 'vscode.git', 'ms-vsonline.vsonline', 'vscode.github-browser', 'ms-vscode.github-browser', 'ms-vscode.remotehub', 'ms-vscode.remotehub-insiders', 'github.codespaces'];
+const VSO_ALLOWED_EXTENSIONS = ['github.vscode-pull-request-github', 'github.vscode-pull-request-github-insiders', 'vscode.git', 'ms-vsonline.vsonline', 'ms-vscode.remotehub', 'ms-vscode.remotehub-insiders', 'github.remotehub', 'github.remotehub-insiders', 'github.codespaces'];
 
 export function readAccountUsages(storageService: IStorageService, providerId: string, accountName: string,): IAccountUsage[] {
 	const accountKey = `${providerId}-${accountName}-usages`;
@@ -338,7 +338,7 @@ export class AuthenticationService extends Disposable implements IAuthentication
 		}
 
 		Object.keys(existingRequestsForProvider).forEach(requestedScopes => {
-			if (addedSessions.some(session => session.scopes.slice().sort().join('') === requestedScopes)) {
+			if (addedSessions.some(session => session.scopes.slice().join('') === requestedScopes)) {
 				const sessionRequest = existingRequestsForProvider[requestedScopes];
 				sessionRequest?.disposables.forEach(item => item.dispose());
 
@@ -503,7 +503,7 @@ export class AuthenticationService extends Disposable implements IAuthentication
 				this.updatedAllowedExtension(providerId, accountName, extensionId, extensionName, true);
 
 				this.removeAccessRequest(providerId, extensionId);
-				this.storageService.store(`${extensionName}-${providerId}-${scopes.join('-')}`, session.id, StorageScope.GLOBAL, StorageTarget.MACHINE);
+				this.storageService.store(`${extensionName}-${providerId}`, session.id, StorageScope.GLOBAL, StorageTarget.MACHINE);
 
 				quickPick.dispose();
 				resolve(session);
@@ -604,7 +604,7 @@ export class AuthenticationService extends Disposable implements IAuthentication
 
 		if (provider) {
 			const providerRequests = this._signInRequestItems.get(providerId);
-			const scopesList = scopes.sort().join('');
+			const scopesList = scopes.join('');
 			const extensionHasExistingRequest = providerRequests
 				&& providerRequests[scopesList]
 				&& providerRequests[scopesList].requestingExtensionIds.includes(extensionId);
@@ -638,7 +638,7 @@ export class AuthenticationService extends Disposable implements IAuthentication
 					this.updatedAllowedExtension(providerId, session.account.label, extensionId, extensionName, true);
 
 					// And also set it as the preferred account for the extension
-					storageService.store(`${extensionName}-${providerId}-${scopes.join('-')}`, session.id, StorageScope.GLOBAL, StorageTarget.MACHINE);
+					storageService.store(`${extensionName}-${providerId}`, session.id, StorageScope.GLOBAL, StorageTarget.MACHINE);
 				}
 			});
 

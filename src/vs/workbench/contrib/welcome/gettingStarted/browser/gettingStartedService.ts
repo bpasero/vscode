@@ -133,6 +133,8 @@ export interface IGettingStartedService {
 
 	getCategories(): IGettingStartedCategoryWithProgress[]
 
+	registerWalkthrough(categoryDescriptor: IGettingStartedWalkthroughDescriptor, steps: IGettingStartedStep[]): void;
+
 	progressByEvent(eventName: string): void;
 	progressStep(id: string): void;
 	deprogressStep(id: string): void;
@@ -171,6 +173,7 @@ export class GettingStartedService extends Disposable implements IGettingStarted
 	private sessionInstalledExtensions = new Set<string>();
 
 	private categoryVisibilityContextKeys = new Set<string>();
+	private stepCompletionContextKeyExpressions = new Set<ContextKeyExpression>();
 	private stepCompletionContextKeys = new Set<string>();
 
 	private triggerInstalledExtensionsRegistered!: () => void;
@@ -209,7 +212,7 @@ export class GettingStartedService extends Disposable implements IGettingStarted
 
 		this._register(this.extensionManagementService.onDidInstallExtension(async e => {
 			if (await this.hostService.hadLastFocus()) {
-				this.sessionInstalledExtensions.add(e.identifier.id);
+				this.sessionInstalledExtensions.add(e.identifier.id.toLowerCase());
 			}
 			this.progressByEvent(`extensionInstalled:${e.identifier.id.toLowerCase()}`);
 		}));
@@ -217,9 +220,9 @@ export class GettingStartedService extends Disposable implements IGettingStarted
 		this._register(this.contextService.onDidChangeContext(event => {
 			if (event.affectsSome(this.categoryVisibilityContextKeys)) { this._onDidAddCategory.fire(); }
 			if (event.affectsSome(this.stepCompletionContextKeys)) {
-				this.stepCompletionContextKeys.forEach(key => {
-					if (event.affectsSome(new Set([key])) && this.contextService.getContextKeyValue(key)) {
-						this.progressByEvent(`onContextKeyDefined:` + key);
+				this.stepCompletionContextKeyExpressions.forEach(expression => {
+					if (event.affectsSome(new Set(expression.keys())) && this.contextService.contextMatchesRules(expression)) {
+						this.progressByEvent(`onContext:` + expression.serialize());
 					}
 				});
 			}
@@ -297,7 +300,7 @@ export class GettingStartedService extends Disposable implements IGettingStarted
 							}
 							: {
 								type: 'markdown',
-								path: convertInternalMediaPathToFileURI(step.media.path),
+								path: convertInternalMediaPathToFileURI(step.media.path).with({ query: JSON.stringify({ moduleId: 'vs/workbench/contrib/welcome/gettingStarted/common/media/' + step.media.path }) }),
 								base: FileAccess.asFileUri('vs/workbench/contrib/welcome/gettingStarted/common/media/', require),
 								root: FileAccess.asFileUri('vs/workbench/contrib/welcome/gettingStarted/common/media/', require),
 							},
@@ -365,45 +368,37 @@ export class GettingStartedService extends Disposable implements IGettingStarted
 			}
 		};
 
-		let sectionToOpen: string | undefined;
-
 		if (!(extension.contributes?.walkthroughs?.length)) {
 			return;
 		}
 
-		if (this.productService.quality === 'stable') {
-			console.warn('Extension', extension.identifier.value, 'contributes welcome page content but this is a Stable build and extension contributions are only available in Insiders. The contributed content will be disregarded.');
-			return;
-		}
-
-		if (!this.configurationService.getValue<boolean>('workbench.welcomePage.experimental.extensionContributions')) {
-			console.warn('Extension', extension.identifier.value, 'contributes welcome page content but the welcome page extension contribution feature flag has not been set. Set `workbench.welcomePage.experimental.extensionContributions` to begin using this experimental feature.');
-			return;
-		}
-
-		extension.contributes.startEntries?.forEach(entry => {
-			const entryID = extension.identifier.value + '#startEntry#' + idForStartEntry(entry);
-			this.registerStartEntry({
-				content: {
-					type: 'startEntry',
-					command: entry.command,
-				},
-				description: entry.description,
-				title: entry.title,
-				id: entryID,
-				order: 0,
-				when: ContextKeyExpr.deserialize(entry.when) ?? ContextKeyExpr.true(),
-				icon: {
-					type: 'image',
-					path: extension.icon
-						? FileAccess.asBrowserUri(joinPath(extension.extensionLocation, extension.icon)).toString(true)
-						: DefaultIconPath
-				}
+		if (this.configurationService.getValue<boolean>('workbench.welcomePage.experimental.startEntryContributions') && this.productService.quality !== 'stable') {
+			extension.contributes.startEntries?.forEach(entry => {
+				const entryID = extension.identifier.value + '#startEntry#' + idForStartEntry(entry);
+				this.registerStartEntry({
+					content: {
+						type: 'startEntry',
+						command: entry.command,
+					},
+					description: entry.description,
+					title: entry.title,
+					id: entryID,
+					order: 0,
+					when: ContextKeyExpr.deserialize(entry.when) ?? ContextKeyExpr.true(),
+					icon: {
+						type: 'image',
+						path: extension.icon
+							? FileAccess.asBrowserUri(joinPath(extension.extensionLocation, extension.icon)).toString(true)
+							: DefaultIconPath
+					}
+				});
 			});
-		});
+		}
 
 
-		await Promise.all(extension.contributes?.walkthroughs?.map(async walkthrough => {
+		let sectionToOpen: string | undefined;
+		let sectionToOpenIndex = Math.min(); // '+Infinity';
+		await Promise.all(extension.contributes?.walkthroughs?.map(async (walkthrough, index) => {
 			const categoryID = extension.identifier.value + '#' + walkthrough.id;
 
 			const override = await Promise.race([
@@ -412,12 +407,14 @@ export class GettingStartedService extends Disposable implements IGettingStarted
 			]);
 
 			if (
-				this.sessionInstalledExtensions.has(extension.identifier.value)
-				&& walkthrough.primary
+				this.sessionInstalledExtensions.has(extension.identifier.value.toLowerCase())
 				&& this.contextService.contextMatchesRules(ContextKeyExpr.deserialize(override ?? walkthrough.when) ?? ContextKeyExpr.true())
 			) {
-				this.sessionInstalledExtensions.delete(extension.identifier.value);
-				sectionToOpen = categoryID;
+				this.sessionInstalledExtensions.delete(extension.identifier.value.toLowerCase());
+				if (index < sectionToOpenIndex) {
+					sectionToOpen = categoryID;
+					sectionToOpenIndex = index;
+				}
 			}
 
 			const walkthoughDescriptior = {
@@ -432,7 +429,7 @@ export class GettingStartedService extends Disposable implements IGettingStarted
 						? FileAccess.asBrowserUri(joinPath(extension.extensionLocation, extension.icon)).toString(true)
 						: DefaultIconPath
 				},
-				when: ContextKeyExpr.deserialize(walkthrough.when) ?? ContextKeyExpr.true(),
+				when: ContextKeyExpr.deserialize(override ?? walkthrough.when) ?? ContextKeyExpr.true(),
 			} as const;
 
 			const steps = (walkthrough.steps ?? (walkthrough as any).tasks).map((step, index) => {
@@ -444,19 +441,41 @@ export class GettingStartedService extends Disposable implements IGettingStarted
 				const fullyQualifiedID = extension.identifier.value + '#' + walkthrough.id + '#' + step.id;
 
 				let media: IGettingStartedStep['media'];
-				if (typeof step.media.path === 'string' && step.media.path.endsWith('.md')) {
-					media = {
-						type: 'markdown',
-						path: convertExtensionPathToFileURI(step.media.path),
-						base: convertExtensionPathToFileURI(dirname(step.media.path)),
-						root: FileAccess.asFileUri(extension.extensionLocation),
-					};
-				} else {
+
+				if (step.media.image) {
 					const altText = (step.media as any).altText;
 					if (altText === undefined) {
 						console.error('Getting Started: item', fullyQualifiedID, 'is missing altText for its media element.');
 					}
-					media = { type: 'image', altText, path: convertExtensionRelativePathsToBrowserURIs(step.media.path) };
+					media = { type: 'image', altText, path: convertExtensionRelativePathsToBrowserURIs(step.media.image) };
+				}
+				else if (step.media.markdown) {
+					media = {
+						type: 'markdown',
+						path: convertExtensionPathToFileURI(step.media.markdown),
+						base: convertExtensionPathToFileURI(dirname(step.media.markdown)),
+						root: FileAccess.asFileUri(extension.extensionLocation),
+					};
+				}
+
+				// Legacy media config
+				else {
+					const legacyMedia = step.media as unknown as { path: string, altText: string };
+					if (typeof legacyMedia.path === 'string' && legacyMedia.path.endsWith('.md')) {
+						media = {
+							type: 'markdown',
+							path: convertExtensionPathToFileURI(legacyMedia.path),
+							base: convertExtensionPathToFileURI(dirname(legacyMedia.path)),
+							root: FileAccess.asFileUri(extension.extensionLocation),
+						};
+					}
+					else {
+						const altText = legacyMedia.altText;
+						if (altText === undefined) {
+							console.error('Getting Started: item', fullyQualifiedID, 'is missing altText for its media element.');
+						}
+						media = { type: 'image', altText, path: convertExtensionRelativePathsToBrowserURIs(legacyMedia.path) };
+					}
 				}
 
 				return ({
@@ -475,7 +494,7 @@ export class GettingStartedService extends Disposable implements IGettingStarted
 
 		this.triggerInstalledExtensionsRegistered();
 
-		if (sectionToOpen && this.configurationService.getValue<string>('workbench.welcomePage.experimental.extensionContributions') !== 'hide') {
+		if (sectionToOpen && this.configurationService.getValue<string>('workbench.welcomePage.walkthroughs.openOnInstall')) {
 			this.commandService.executeCommand('workbench.action.openWalkthrough', sectionToOpen);
 		}
 	}
@@ -539,8 +558,19 @@ export class GettingStartedService extends Disposable implements IGettingStarted
 			}
 
 			switch (eventType) {
-				case 'onLink': case 'onEvent': case 'onView': case 'onContextKeyDefined': case 'onSettingChanged':
+				case 'onLink': case 'onEvent': case 'onView': case 'onSettingChanged':
 					break;
+				case 'onContext': {
+					const expression = ContextKeyExpr.deserialize(argument);
+					if (expression) {
+						this.stepCompletionContextKeyExpressions.add(expression);
+						expression.keys().forEach(key => this.stepCompletionContextKeys.add(key));
+						event = eventType + ':' + expression.serialize();
+					} else {
+						console.error('Unable to parse context key expression:', expression, 'in getting started step', step.id);
+					}
+					break;
+				}
 				case 'stepSelected':
 					event = eventType + ':' + step.id;
 					break;
@@ -656,7 +686,7 @@ export class GettingStartedService extends Disposable implements IGettingStarted
 		this._onDidAddCategory.fire();
 	}
 
-	private registerWalkthrough(categoryDescriptor: IGettingStartedWalkthroughDescriptor, steps: IGettingStartedStep[]): void {
+	registerWalkthrough(categoryDescriptor: IGettingStartedWalkthroughDescriptor, steps: IGettingStartedStep[]): void {
 		const oldCategory = this.gettingStartedContributions.get(categoryDescriptor.id);
 		if (oldCategory) {
 			console.error(`Skipping attempt to overwrite getting started category. (${categoryDescriptor.id})`);
