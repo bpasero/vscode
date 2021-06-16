@@ -19,7 +19,7 @@ import { EditorInput } from 'vs/workbench/common/editor/editorInput';
 import { TextAreaEditor } from 'vs/workbench/contrib/textAreaEditor/browser/textAreaEditor';
 import { TextAreaEditorInput } from 'vs/workbench/contrib/textAreaEditor/browser/textAreaEditorInput';
 import { ITextAreaEditorService, TextAreaEditorService } from 'vs/workbench/contrib/textAreaEditor/browser/textAreaEditorService';
-import { ContributedEditorPriority, IEditorOverrideService } from 'vs/workbench/services/editor/common/editorOverrideService';
+import { RegisteredEditorPriority, IEditorOverrideService } from 'vs/workbench/services/editor/common/editorOverrideService';
 import { LifecyclePhase } from 'vs/workbench/services/lifecycle/common/lifecycle';
 import { IWorkingCopyEditorService } from 'vs/workbench/services/workingCopy/common/workingCopyEditorService';
 import { IEditorService } from 'vs/workbench/services/editor/common/editorService';
@@ -65,14 +65,13 @@ class TextAreaEditorOverride implements IWorkbenchContribution {
 		@IInstantiationService instantiationService: IInstantiationService,
 		@IEditorOverrideService editorOverrideService: IEditorOverrideService
 	) {
-		editorOverrideService.registerContributionPoint(
+		editorOverrideService.registerEditor(
 			'*',
 			{
 				id: TextAreaEditorInput.OVERRIDE_ID,
-				priority: ContributedEditorPriority.option,
+				priority: RegisteredEditorPriority.option,
 				label: 'Text Area Editor',
-				detail: 'An editor that is textArea based.',
-				describes: editor => editor instanceof TextAreaEditorInput
+				detail: 'An editor that is textArea based.'
 			},
 			{
 				canHandleDiff: false
