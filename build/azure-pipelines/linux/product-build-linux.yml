@@ -92,6 +92,7 @@ steps:
     env:
       ELECTRON_SKIP_BINARY_DOWNLOAD: 1
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
+      GITHUB_TOKEN: "$(github-distro-mixin-password)"
     displayName: Install dependencies
     condition: and(succeeded(), ne(variables.NODE_MODULES_RESTORED, 'true'))
 
@@ -205,11 +206,19 @@ steps:
 
   - task: PublishPipelineArtifact@0
     inputs:
-      artifactName: "crash-dump-linux-$(VSCODE_ARCH)"
+      artifactName: crash-dump-linux-$(VSCODE_ARCH)
       targetPath: .build/crashes
     displayName: "Publish Crash Reports"
     continueOnError: true
     condition: failed()
+
+  - task: PublishPipelineArtifact@0
+    inputs:
+      artifactName: logs-linux-$(VSCODE_ARCH)
+      targetPath: .build/logs
+    displayName: "Publish Log Files"
+    continueOnError: true
+    condition: and(succeededOrFailed(), eq(variables['VSCODE_ARCH'], 'x64'), eq(variables['VSCODE_STEP_ON_IT'], 'false'))
 
   - task: PublishTestResults@2
     displayName: Publish Tests Results
