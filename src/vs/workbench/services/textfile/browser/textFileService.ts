@@ -196,8 +196,8 @@ export abstract class AbstractTextFileService extends Disposable implements ITex
 		};
 	}
 
-	async readStream(resource: URI, options?: IReadTextFileOptions): Promise<ITextFileStreamContent> {
-		const [bufferStream, decoder] = await this.doRead(resource, options);
+	async readStream(resource: URI, options?: IReadTextFileOptions, token?: CancellationToken): Promise<ITextFileStreamContent> {
+		const [bufferStream, decoder] = await this.doRead(resource, options, token);
 
 		return {
 			...bufferStream,
@@ -206,8 +206,8 @@ export abstract class AbstractTextFileService extends Disposable implements ITex
 		};
 	}
 
-	private async doRead(resource: URI, options?: IReadTextFileOptions & { preferUnbuffered?: boolean }): Promise<[IFileStreamContent, IDecodeStreamResult]> {
-		const cts = new CancellationTokenSource();
+	private async doRead(resource: URI, options?: IReadTextFileOptions & { preferUnbuffered?: boolean }, token?: CancellationToken): Promise<[IFileStreamContent, IDecodeStreamResult]> {
+		const cts = new CancellationTokenSource(token);
 
 		// read stream raw (either buffered or unbuffered)
 		let bufferStream: IFileStreamContent;

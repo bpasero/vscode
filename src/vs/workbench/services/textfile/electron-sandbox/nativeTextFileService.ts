@@ -27,6 +27,7 @@ import { IElevatedFileService } from 'vs/workbench/services/files/common/elevate
 import { ILogService } from 'vs/platform/log/common/log';
 import { Promises } from 'vs/base/common/async';
 import { IDecorationsService } from 'vs/workbench/services/decorations/common/decorations';
+import { CancellationToken } from 'vs/base/common/cancellation';
 
 export class NativeTextFileService extends AbstractTextFileService {
 
@@ -85,12 +86,12 @@ export class NativeTextFileService extends AbstractTextFileService {
 		return super.read(resource, options);
 	}
 
-	override async readStream(resource: URI, options?: IReadTextFileOptions): Promise<ITextFileStreamContent> {
+	override async readStream(resource: URI, options?: IReadTextFileOptions, token?: CancellationToken): Promise<ITextFileStreamContent> {
 
 		// ensure size & memory limits
 		options = this.ensureLimits(options);
 
-		return super.readStream(resource, options);
+		return super.readStream(resource, options, token);
 	}
 
 	private ensureLimits(options?: IReadTextFileOptions): IReadTextFileOptions {

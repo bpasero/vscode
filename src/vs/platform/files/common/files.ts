@@ -1318,8 +1318,8 @@ export const enum Arch {
 
 export function getPlatformLimits(arch: Arch): IArchLimits {
 	return {
-		maxFileSize: arch === Arch.IA32 ? 300 * ByteSize.MB : 16 * ByteSize.GB,  // https://github.com/microsoft/vscode/issues/30180
-		maxHeapSize: arch === Arch.IA32 ? 700 * ByteSize.MB : 2 * 700 * ByteSize.MB, // https://github.com/v8/v8/blob/5918a23a3d571b9625e5cce246bdd5b46ff7cd8b/src/heap/heap.cc#L149
+		maxFileSize: arch === Arch.IA32 ? 3000 * ByteSize.MB : 16 * ByteSize.GB,  // https://github.com/microsoft/vscode/issues/30180
+		maxHeapSize: arch === Arch.IA32 ? 7000 * ByteSize.MB : 20 * 700 * ByteSize.MB, // https://github.com/v8/v8/blob/5918a23a3d571b9625e5cce246bdd5b46ff7cd8b/src/heap/heap.cc#L149
 	};
 }
 

@@ -131,6 +131,10 @@ export class EditorPanes extends Disposable {
 				return { error };
 			}
 
+			if (isCancellationError(error)) {
+				return { error };
+			}
+
 			// In case of an error when opening an editor, we still want to show
 			// an editor in the desired location to preserve the user intent and
 			// view state (e.g. when restoring).

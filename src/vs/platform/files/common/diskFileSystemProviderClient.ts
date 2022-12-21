@@ -90,6 +90,11 @@ export class DiskFileSystemProviderClient extends Disposable implements
 	}
 
 	readFileStream(resource: URI, opts: IFileReadStreamOptions, token: CancellationToken): ReadableStreamEvents<Uint8Array> {
+		console.log("readFileStream: " + resource.fsPath, !!token);
+		token.onCancellationRequested(() => {
+			console.log("readFileStream: " + resource.fsPath + " cancelled");
+		});
+
 		const stream = newWriteableStream<Uint8Array>(data => VSBuffer.concat(data.map(data => VSBuffer.wrap(data))).buffer);
 
 		// Reading as file stream goes through an event to the remote side

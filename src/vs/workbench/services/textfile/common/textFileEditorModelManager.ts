@@ -322,7 +322,7 @@ export class TextFileEditorModelManager extends Disposable implements ITextFileE
 		await this.doResolve(model, { reload: { async: false } });
 	}
 
-	async resolve(resource: URI, options?: ITextFileEditorModelResolveOrCreateOptions): Promise<TextFileEditorModel> {
+	async resolve(resource: URI, options?: ITextFileEditorModelResolveOrCreateOptions, token?: CancellationToken): Promise<TextFileEditorModel> {
 
 		// Await a pending model resolve first before proceeding
 		// to ensure that we never resolve a model more than once
@@ -333,10 +333,10 @@ export class TextFileEditorModelManager extends Disposable implements ITextFileE
 		}
 
 		// Trigger resolve
-		return this.doResolve(resource, options);
+		return this.doResolve(resource, options, token);
 	}
 
-	private async doResolve(resourceOrModel: URI | TextFileEditorModel, options?: ITextFileEditorModelResolveOrCreateOptions): Promise<TextFileEditorModel> {
+	private async doResolve(resourceOrModel: URI | TextFileEditorModel, options?: ITextFileEditorModelResolveOrCreateOptions, token?: CancellationToken): Promise<TextFileEditorModel> {
 		let model: TextFileEditorModel | undefined;
 		let resource: URI;
 		if (URI.isUri(resourceOrModel)) {
@@ -355,7 +355,7 @@ export class TextFileEditorModelManager extends Disposable implements ITextFileE
 
 			// Always reload if contents are provided
 			if (options?.contents) {
-				modelResolve = model.resolve(options);
+				modelResolve = model.resolve(options, token);
 			}
 
 			// Reload async or sync based on options
@@ -366,7 +366,7 @@ export class TextFileEditorModelManager extends Disposable implements ITextFileE
 					modelResolve = Promise.resolve();
 					(async () => {
 						try {
-							await model.resolve(options);
+							await model.resolve(options, token);
 						} catch (error) {
 							onUnexpectedError(error);
 						}
@@ -375,7 +375,7 @@ export class TextFileEditorModelManager extends Disposable implements ITextFileE
 
 				// sync reload: do not return until model reloaded
 				else {
-					modelResolve = model.resolve(options);
+					modelResolve = model.resolve(options, token);
 				}
 			}
 
@@ -390,7 +390,7 @@ export class TextFileEditorModelManager extends Disposable implements ITextFileE
 			didCreateModel = true;
 
 			const newModel = model = this.instantiationService.createInstance(TextFileEditorModel, resource, options ? options.encoding : undefined, options ? options.languageId : undefined);
-			modelResolve = model.resolve(options);
+			modelResolve = model.resolve(options, token);
 
 			this.registerModel(newModel);
 		}

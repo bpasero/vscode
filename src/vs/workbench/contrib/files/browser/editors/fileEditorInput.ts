@@ -12,7 +12,7 @@ import { BinaryEditorModel } from 'vs/workbench/common/editor/binaryEditorModel'
 import { FileOperationError, FileOperationResult, FileSystemProviderCapabilities, IFileService } from 'vs/platform/files/common/files';
 import { ITextFileService, TextFileEditorModelState, TextFileResolveReason, TextFileOperationError, TextFileOperationResult, ITextFileEditorModel, EncodingMode } from 'vs/workbench/services/textfile/common/textfiles';
 import { IInstantiationService } from 'vs/platform/instantiation/common/instantiation';
-import { IReference, dispose, DisposableStore } from 'vs/base/common/lifecycle';
+import { IReference, dispose, DisposableStore, toDisposable } from 'vs/base/common/lifecycle';
 import { ITextModelService } from 'vs/editor/common/services/resolverService';
 import { FILE_EDITOR_INPUT_ID, TEXT_FILE_EDITOR_ID, BINARY_FILE_EDITOR_ID } from 'vs/workbench/contrib/files/common/files';
 import { ILabelService } from 'vs/platform/label/common/label';
@@ -23,6 +23,7 @@ import { Event } from 'vs/base/common/event';
 import { Schemas } from 'vs/base/common/network';
 import { createTextBufferFactory } from 'vs/editor/common/model/textModel';
 import { IPathService } from 'vs/workbench/services/path/common/pathService';
+import { CancellationTokenSource } from 'vs/base/common/cancellation';
 
 const enum ForceOpenAs {
 	None,
@@ -323,6 +324,9 @@ export class FileEditorInput extends AbstractTextResourceEditorInput implements 
 			const preferredContents = this.preferredContents;
 			this.preferredContents = undefined;
 
+			const cts = new CancellationTokenSource();
+			this._register(toDisposable(() => cts.dispose(true)));
+
 			// Resolve resource via text file service and only allow
 			// to open binary files if we are instructed so
 			await this.textFileService.files.resolve(this.resource, {
@@ -332,7 +336,7 @@ export class FileEditorInput extends AbstractTextResourceEditorInput implements 
 				reload: { async: true }, // trigger a reload of the model if it exists already but do not wait to show the model
 				allowBinary: this.forceOpenAs === ForceOpenAs.Text,
 				reason: TextFileResolveReason.EDITOR
-			});
+			}, cts.token);
 
 			// This is a bit ugly, because we first resolve the model and then resolve a model reference. the reason being that binary
 			// or very large files do not resolve to a text file model but should be opened as binary files without text. First calling into
@@ -437,6 +441,7 @@ export class FileEditorInput extends AbstractTextResourceEditorInput implements 
 	}
 
 	override dispose(): void {
+		console.log('FileEditorInput.dispose()');
 
 		// Model
 		this.model = undefined;

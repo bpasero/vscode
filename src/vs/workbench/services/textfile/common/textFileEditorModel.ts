@@ -273,7 +273,7 @@ export class TextFileEditorModel extends BaseTextEditorModel implements ITextFil
 
 	//#region Resolve
 
-	override async resolve(options?: ITextFileResolveOptions): Promise<void> {
+	override async resolve(options?: ITextFileResolveOptions, token?: CancellationToken): Promise<void> {
 		this.trace('resolve() - enter');
 
 		// Return early if we are disposed
@@ -292,10 +292,10 @@ export class TextFileEditorModel extends BaseTextEditorModel implements ITextFil
 			return;
 		}
 
-		return this.doResolve(options);
+		return this.doResolve(options, token);
 	}
 
-	private async doResolve(options?: ITextFileResolveOptions): Promise<void> {
+	private async doResolve(options?: ITextFileResolveOptions, token?: CancellationToken): Promise<void> {
 
 		// First check if we have contents to use for the model
 		if (options?.contents) {
@@ -312,7 +312,7 @@ export class TextFileEditorModel extends BaseTextEditorModel implements ITextFil
 		}
 
 		// Finally, resolve from file resource
-		return this.resolveFromFile(options);
+		return this.resolveFromFile(options, token);
 	}
 
 	private async resolveFromBuffer(buffer: ITextBufferFactory, options?: ITextFileResolveOptions): Promise<void> {
@@ -412,7 +412,7 @@ export class TextFileEditorModel extends BaseTextEditorModel implements ITextFil
 		}
 	}
 
-	private async resolveFromFile(options?: ITextFileResolveOptions): Promise<void> {
+	private async resolveFromFile(options?: ITextFileResolveOptions, token?: CancellationToken): Promise<void> {
 		this.trace('resolveFromFile()');
 
 		const forceReadFromFile = options?.forceReadFromFile;
@@ -432,7 +432,8 @@ export class TextFileEditorModel extends BaseTextEditorModel implements ITextFil
 
 		// Resolve Content
 		try {
-			const content = await this.textFileService.readStream(this.resource, { acceptTextOnly: !allowBinary, etag, encoding: this.preferredEncoding });
+			token?.onCancellationRequested(() => { console.log("MODEL TOKEN CANCEL!") });
+			const content = await this.textFileService.readStream(this.resource, { acceptTextOnly: !allowBinary, etag, encoding: this.preferredEncoding }, token);
 
 			// Clear orphaned state when resolving was successful
 			this.setOrphaned(false);

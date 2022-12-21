@@ -85,7 +85,7 @@ export interface ITextFileService extends IDisposable {
 	/**
 	 * Read the contents of a file identified by the resource as stream.
 	 */
-	readStream(resource: URI, options?: IReadTextFileOptions): Promise<ITextFileStreamContent>;
+	readStream(resource: URI, options?: IReadTextFileOptions, token?: CancellationToken): Promise<ITextFileStreamContent>;
 
 	/**
 	 * Update a file with given contents.
@@ -138,7 +138,9 @@ export interface IReadTextFileEncodingOptions {
 	readonly acceptTextOnly?: boolean;
 }
 
-export interface IReadTextFileOptions extends IReadTextFileEncodingOptions, IReadFileStreamOptions { }
+export interface IReadTextFileOptions extends IReadTextFileEncodingOptions, IReadFileStreamOptions {
+	readonly token?: CancellationToken;
+}
 
 export interface IWriteTextFileOptions extends IWriteFileOptions {
 
@@ -359,7 +361,7 @@ export interface ITextFileEditorModelManager {
 	/**
 	 * Allows to resolve a text file model from disk.
 	 */
-	resolve(resource: URI, options?: ITextFileEditorModelResolveOrCreateOptions): Promise<ITextFileEditorModel>;
+	resolve(resource: URI, options?: ITextFileEditorModelResolveOrCreateOptions, token?: CancellationToken): Promise<ITextFileEditorModel>;
 
 	/**
 	 * Adds a participant for saving text file models.
@@ -435,6 +437,8 @@ export interface ITextFileResolveOptions {
 	 * Context why the model is being resolved.
 	 */
 	readonly reason?: TextFileResolveReason;
+
+	readonly token?: CancellationToken;
 }
 
 export const enum EncodingMode {

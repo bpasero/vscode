@@ -76,6 +76,12 @@ async function doReadFileIntoStream<T>(provider: IFileSystemProviderWithOpenRead
 		let posInFile = options && typeof options.position === 'number' ? options.position : 0;
 		let posInBuffer = 0;
 		do {
+			if (token.isCancellationRequested) {
+				console.log("CANCELLED!!!: " + resource.fsPath);
+			} else {
+				console.log("NOT CANCELLED!!!: " + resource.fsPath);
+			}
+
 			// read from source (handle) at current position (pos) into buffer (buffer) at
 			// buffer position (posInBuffer) up to the size of the buffer (buffer.byteLength).
 			bytesRead = await provider.read(handle, posInFile, buffer.buffer, posInBuffer, buffer.byteLength - posInBuffer);
