@@ -3,17 +3,17 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { ISCMResource, ISCMRepository, ISCMResourceGroup, ISCMInput } from 'vs/workbench/contrib/scm/common/scm';
+import { ISCMResource, ISCMRepository, ISCMResourceGroup, ISCMInput, ISCMActionButton } from 'vs/workbench/contrib/scm/common/scm';
 import { IMenu } from 'vs/platform/actions/common/actions';
 import { ActionBar, IActionViewItemProvider } from 'vs/base/browser/ui/actionbar/actionbar';
-import { IDisposable, Disposable, combinedDisposable, toDisposable } from 'vs/base/common/lifecycle';
+import { IDisposable } from 'vs/base/common/lifecycle';
 import { Action, IAction } from 'vs/base/common/actions';
 import { createActionViewItem, createAndFillInActionBarActions, createAndFillInContextMenuActions } from 'vs/platform/actions/browser/menuEntryActionViewItem';
 import { equals } from 'vs/base/common/arrays';
 import { ActionViewItem } from 'vs/base/browser/ui/actionbar/actionViewItems';
 import { renderLabelWithIcons } from 'vs/base/browser/ui/iconLabel/iconLabels';
 import { ICommandService } from 'vs/platform/commands/common/commands';
-import { Command } from 'vs/editor/common/modes';
+import { Command } from 'vs/editor/common/languages';
 import { reset } from 'vs/base/browser/dom';
 import { IInstantiationService } from 'vs/platform/instantiation/common/instantiation';
 
@@ -25,6 +25,10 @@ export function isSCMInput(element: any): element is ISCMInput {
 	return !!(element as ISCMInput).validateInput && typeof (element as ISCMInput).value === 'string';
 }
 
+export function isSCMActionButton(element: any): element is ISCMActionButton {
+	return (element as ISCMActionButton).type === 'actionButton';
+}
+
 export function isSCMResourceGroup(element: any): element is ISCMResourceGroup {
 	return !!(element as ISCMResourceGroup).provider && !!(element as ISCMResourceGroup).elements;
 }
@@ -33,10 +37,9 @@ export function isSCMResource(element: any): element is ISCMResource {
 	return !!(element as ISCMResource).sourceUri && isSCMResourceGroup((element as ISCMResource).resourceGroup);
 }
 
-const compareActions = (a: IAction, b: IAction) => a.id === b.id;
+const compareActions = (a: IAction, b: IAction) => a.id === b.id && a.enabled === b.enabled;
 
 export function connectPrimaryMenu(menu: IMenu, callback: (primary: IAction[], secondary: IAction[]) => void, primaryGroup?: string): IDisposable {
-	let cachedDisposable: IDisposable = Disposable.None;
 	let cachedPrimary: IAction[] = [];
 	let cachedSecondary: IAction[] = [];
 
@@ -44,14 +47,12 @@ export function connectPrimaryMenu(menu: IMenu, callback: (primary: IAction[], s
 		const primary: IAction[] = [];
 		const secondary: IAction[] = [];
 
-		const disposable = createAndFillInActionBarActions(menu, { shouldForwardArgs: true }, { primary, secondary }, primaryGroup);
+		createAndFillInActionBarActions(menu, { shouldForwardArgs: true }, { primary, secondary }, primaryGroup);
 
 		if (equals(cachedPrimary, primary, compareActions) && equals(cachedSecondary, secondary, compareActions)) {
-			disposable.dispose();
 			return;
 		}
 
-		cachedDisposable = disposable;
 		cachedPrimary = primary;
 		cachedSecondary = secondary;
 
@@ -60,10 +61,7 @@ export function connectPrimaryMenu(menu: IMenu, callback: (primary: IAction[], s
 
 	updateActions();
 
-	return combinedDisposable(
-		menu.onDidChange(updateActions),
-		toDisposable(() => cachedDisposable.dispose())
-	);
+	return menu.onDidChange(updateActions);
 }
 
 export function connectPrimaryMenuToInlineActionBar(menu: IMenu, actionBar: ActionBar): IDisposable {
@@ -73,11 +71,11 @@ export function connectPrimaryMenuToInlineActionBar(menu: IMenu, actionBar: Acti
 	}, 'inline');
 }
 
-export function collectContextMenuActions(menu: IMenu): [IAction[], IDisposable] {
+export function collectContextMenuActions(menu: IMenu): IAction[] {
 	const primary: IAction[] = [];
 	const actions: IAction[] = [];
-	const disposable = createAndFillInContextMenuActions(menu, { shouldForwardArgs: true }, { primary, secondary: actions }, 'inline');
-	return [actions, disposable];
+	createAndFillInContextMenuActions(menu, { shouldForwardArgs: true }, { primary, secondary: actions }, 'inline');
+	return actions;
 }
 
 export class StatusBarAction extends Action {
@@ -101,9 +99,9 @@ class StatusBarActionViewItem extends ActionViewItem {
 		super(null, action, {});
 	}
 
-	override updateLabel(): void {
+	protected override updateLabel(): void {
 		if (this.options.label && this.label) {
-			reset(this.label, ...renderLabelWithIcons(this.getAction().label));
+			reset(this.label, ...renderLabelWithIcons(this.action.label));
 		}
 	}
 }

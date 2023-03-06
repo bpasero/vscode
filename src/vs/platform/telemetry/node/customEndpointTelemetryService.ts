@@ -3,13 +3,16 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { Client as TelemetryClient } from 'vs/base/parts/ipc/node/ipc.cp';
-import { TelemetryAppenderClient } from 'vs/platform/telemetry/common/telemetryIpc';
 import { FileAccess } from 'vs/base/common/network';
-import { TelemetryService } from 'vs/platform/telemetry/common/telemetryService';
+import { Client as TelemetryClient } from 'vs/base/parts/ipc/node/ipc.cp';
 import { IConfigurationService } from 'vs/platform/configuration/common/configuration';
+import { IEnvironmentService } from 'vs/platform/environment/common/environment';
+import { ILogService, ILoggerService } from 'vs/platform/log/common/log';
+import { IProductService } from 'vs/platform/product/common/productService';
 import { ICustomEndpointTelemetryService, ITelemetryData, ITelemetryEndpoint, ITelemetryService } from 'vs/platform/telemetry/common/telemetry';
-
+import { TelemetryAppenderClient } from 'vs/platform/telemetry/common/telemetryIpc';
+import { TelemetryLogAppender } from 'vs/platform/telemetry/common/telemetryLogAppender';
+import { TelemetryService } from 'vs/platform/telemetry/common/telemetryService';
 export class CustomEndpointTelemetryService implements ICustomEndpointTelemetryService {
 	declare readonly _serviceBrand: undefined;
 
@@ -17,7 +20,11 @@ export class CustomEndpointTelemetryService implements ICustomEndpointTelemetryS
 
 	constructor(
 		@IConfigurationService private readonly configurationService: IConfigurationService,
-		@ITelemetryService private readonly telemetryService: ITelemetryService
+		@ITelemetryService private readonly telemetryService: ITelemetryService,
+		@ILogService private readonly logService: ILogService,
+		@ILoggerService private readonly loggerService: ILoggerService,
+		@IEnvironmentService private readonly environmentService: IEnvironmentService,
+		@IProductService private readonly productService: IProductService
 	) { }
 
 	private async getCustomTelemetryService(endpoint: ITelemetryEndpoint): Promise<ITelemetryService> {
@@ -28,7 +35,7 @@ export class CustomEndpointTelemetryService implements ICustomEndpointTelemetryS
 			telemetryInfo['common.vscodesessionid'] = sessionId;
 			const args = [endpoint.id, JSON.stringify(telemetryInfo), endpoint.aiKey];
 			const client = new TelemetryClient(
-				FileAccess.asFileUri('bootstrap-fork', require).fsPath,
+				FileAccess.asFileUri('bootstrap-fork').fsPath,
 				{
 					serverName: 'Debug Telemetry',
 					timeout: 1000 * 60 * 5,
@@ -42,12 +49,15 @@ export class CustomEndpointTelemetryService implements ICustomEndpointTelemetryS
 			);
 
 			const channel = client.getChannel('telemetryAppender');
-			const appender = new TelemetryAppenderClient(channel);
+			const appenders = [
+				new TelemetryAppenderClient(channel),
+				new TelemetryLogAppender(this.logService, this.loggerService, this.environmentService, this.productService, `[${endpoint.id}] `),
+			];
 
 			this.customTelemetryServices.set(endpoint.id, new TelemetryService({
-				appender,
+				appenders,
 				sendErrorTelemetry: endpoint.sendErrorTelemetry
-			}, this.configurationService));
+			}, this.configurationService, this.productService));
 		}
 
 		return this.customTelemetryServices.get(endpoint.id)!;

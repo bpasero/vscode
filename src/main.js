@@ -21,23 +21,20 @@ const os = require('os');
 const bootstrap = require('./bootstrap');
 const bootstrapNode = require('./bootstrap-node');
 const { getUserDataPath } = require('./vs/platform/environment/node/userDataPath');
+const { stripComments } = require('./vs/base/common/stripComments');
 /** @type {Partial<IProductConfiguration>} */
 const product = require('../product.json');
-const { app, protocol, crashReporter } = require('electron');
-
-// Disable render process reuse, we still have
-// non-context aware native modules in the renderer.
-app.allowRendererProcessReuse = false;
+const { app, protocol, crashReporter, Menu } = require('electron');
 
 // Enable portable support
 const portable = bootstrapNode.configurePortable(product);
 
 // Enable ASAR support
-bootstrap.enableASARSupport(undefined);
+bootstrap.enableASARSupport();
 
 // Set userData path before app 'ready' event
 const args = parseCLIArgs();
-const userDataPath = getUserDataPath(args);
+const userDataPath = getUserDataPath(args, product.nameShort ?? 'code-oss-dev');
 app.setPath('userData', userDataPath);
 
 // Resolve code cache path
@@ -46,9 +43,22 @@ const codeCachePath = getCodeCachePath();
 // Configure static command line arguments
 const argvConfig = configureCommandlineSwitchesSync(args);
 
+// Disable default menu (https://github.com/electron/electron/issues/35512)
+Menu.setApplicationMenu(null);
+
 // Configure crash reporter
 perf.mark('code/willStartCrashReporter');
-configureCrashReporter();
+// If a crash-reporter-directory is specified we store the crash reports
+// in the specified directory and don't upload them to the crash server.
+//
+// Appcenter crash reporting is enabled if
+// * enable-crash-reporter runtime argument is set to 'true'
+// * --disable-crash-reporter command line parameter is not set
+//
+// Disable crash reporting in all other cases.
+if (args['crash-reporter-directory'] || (argvConfig['enable-crash-reporter'] && !args['disable-crash-reporter'])) {
+	configureCrashReporter();
+}
 perf.mark('code/didStartCrashReporter');
 
 // Set logs path before app 'ready' event if running portable
@@ -78,15 +88,47 @@ registerListeners();
  * Support user defined locale: load it early before app('ready')
  * to have more things running in parallel.
  *
- * @type {Promise<NLSConfiguration> | undefined}
+ * @type {Promise<NLSConfiguration> | undefined}
  */
 let nlsConfigurationPromise = undefined;
 
 const metaDataFile = path.join(__dirname, 'nls.metadata.json');
-const locale = getUserDefinedLocale(argvConfig);
-if (locale) {
+const language = getUserDefinedLocale(argvConfig);
+/**
+ * @type {string | undefined}
+ **/
+let osLocale = undefined;
+// This if statement can be simplified once
+// VS Code moves to Electron 22.
+// Ref https://github.com/microsoft/vscode/issues/159813
+// and https://github.com/electron/electron/pull/36035
+if ('getPreferredSystemLanguages' in app
+	&& typeof app.getPreferredSystemLanguages === 'function') {
+	// Use the most preferred OS language for language recommendation.
+	// The API might return an empty array on Linux, such as when
+	// the 'C' locale is the user's only configured locale.
+	// No matter the OS, if the array is empty, default back to 'en'.
+	osLocale = app.getPreferredSystemLanguages()?.[0] ?? 'en';
+	if (osLocale) {
+		osLocale = processZhLocale(osLocale.toLowerCase());
+	}
+}
+if (language && osLocale) {
 	const { getNLSConfiguration } = require('./vs/base/node/languagePacks');
-	nlsConfigurationPromise = getNLSConfiguration(product.commit, userDataPath, metaDataFile, locale);
+	nlsConfigurationPromise = getNLSConfiguration(product.commit, userDataPath, metaDataFile, osLocale, language);
+}
+
+// Pass in the locale to Electron so that the
+// Windows Control Overlay is rendered correctly on Windows.
+// For now, don't pass in the locale on macOS due to
+// https://github.com/microsoft/vscode/issues/167543.
+// If the locale is `qps-ploc`, the Microsoft
+// Pseudo Language Language Pack is being used.
+// In that case, use `en` as the Electron locale.
+
+if (process.platform === 'win32' || process.platform === 'linux') {
+	const electronLocale = (!language || language === 'qps-ploc') ? 'en' : language;
+	app.commandLine.appendSwitch('lang', electronLocale);
 }
 
 // Load our code once ready
@@ -145,9 +187,6 @@ function configureCommandlineSwitchesSync(cliArgs) {
 		// alias from us for --disable-gpu
 		'disable-hardware-acceleration',
 
-		// provided by Electron
-		'disable-color-correct-rendering',
-
 		// override for the color profile to use
 		'force-color-profile'
 	];
@@ -163,18 +202,12 @@ function configureCommandlineSwitchesSync(cliArgs) {
 		// Persistently enable proposed api via argv.json: https://github.com/microsoft/vscode/issues/99775
 		'enable-proposed-api',
 
-		// TODO@sandbox remove me once testing is done on `vscode-file` protocol
-		// (all traces of `enable-browser-code-loading` and `VSCODE_BROWSER_CODE_LOADING`)
-		'enable-browser-code-loading',
-
-		// Log level to use. Default is 'info'. Allowed values are 'critical', 'error', 'warn', 'info', 'debug', 'trace', 'off'.
+		// Log level to use. Default is 'info'. Allowed values are 'error', 'warn', 'info', 'debug', 'trace', 'off'.
 		'log-level'
 	];
 
 	// Read argv config
 	const argvConfig = readArgvConfigSync();
-
-	let browserCodeLoadingStrategy = typeof codeCachePath === 'string' ? 'bypassHeatCheck' : 'none';
 
 	Object.keys(argvConfig).forEach(argvKey => {
 		const argvValue = argvConfig[argvKey];
@@ -210,32 +243,29 @@ function configureCommandlineSwitchesSync(cliArgs) {
 					}
 					break;
 
-				case 'enable-browser-code-loading':
-					if (argvValue === false) {
-						browserCodeLoadingStrategy = undefined;
-					} else if (typeof argvValue === 'string') {
-						browserCodeLoadingStrategy = argvValue;
-					}
-					break;
-
 				case 'log-level':
 					if (typeof argvValue === 'string') {
 						process.argv.push('--log', argvValue);
+					} else if (Array.isArray(argvValue)) {
+						for (const value of argvValue) {
+							process.argv.push('--log', value);
+						}
 					}
 					break;
 			}
 		}
 	});
 
+	/* Following features are disabled from the runtime.
+	 * `CalculateNativeWinOcclusion` - Disable native window occlusion tracker,
+	 *	Refs https://groups.google.com/a/chromium.org/g/embedder-dev/c/ZF3uHHyWLKw/m/VDN2hDXMAAAJ
+	 */
+	app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
+
 	// Support JS Flags
 	const jsFlags = getJSFlags(cliArgs);
 	if (jsFlags) {
 		app.commandLine.appendSwitch('js-flags', jsFlags);
-	}
-
-	// Configure vscode-file:// code loading environment
-	if (cliArgs.__sandbox || browserCodeLoadingStrategy) {
-		process.env['VSCODE_BROWSER_CODE_LOADING'] = browserCodeLoadingStrategy || 'bypassHeatCheck';
 	}
 
 	return argvConfig;
@@ -258,9 +288,7 @@ function readArgvConfigSync() {
 
 	// Fallback to default
 	if (!argvConfig) {
-		argvConfig = {
-			'disable-color-correct-rendering': true // Force pre-Chrome-60 color profile handling (for https://github.com/microsoft/vscode/issues/51791)
-		};
+		argvConfig = {};
 	}
 
 	return argvConfig;
@@ -290,11 +318,7 @@ function createDefaultArgvConfigSync(argvConfigPath) {
 			'{',
 			'	// Use software rendering instead of hardware accelerated rendering.',
 			'	// This can help in cases where you see rendering issues in VS Code.',
-			'	// "disable-hardware-acceleration": true,',
-			'',
-			'	// Enabled by default by VS Code to resolve color issues in the renderer',
-			'	// See https://github.com/microsoft/vscode/issues/51791 for details',
-			'	"disable-color-correct-rendering": true',
+			'	// "disable-hardware-acceleration": true',
 			'}'
 		];
 
@@ -316,13 +340,12 @@ function getArgvConfigPath() {
 		dataFolderName = `${dataFolderName}-dev`;
 	}
 
+	// @ts-ignore
 	return path.join(os.homedir(), dataFolderName, 'argv.json');
 }
 
 function configureCrashReporter() {
 
-	// If a crash-reporter-directory is specified we store the crash reports
-	// in the specified directory and don't upload them to the crash server.
 	let crashReporterDirectory = args['crash-reporter-directory'];
 	let submitURL = '';
 	if (crashReporterDirectory) {
@@ -335,7 +358,7 @@ function configureCrashReporter() {
 
 		if (!fs.existsSync(crashReporterDirectory)) {
 			try {
-				fs.mkdirSync(crashReporterDirectory);
+				fs.mkdirSync(crashReporterDirectory, { recursive: true });
 			} catch (error) {
 				console.error(`The path '${crashReporterDirectory}' specified for --crash-reporter-directory does not seem to exist or cannot be created.`);
 				app.exit(1);
@@ -351,11 +374,7 @@ function configureCrashReporter() {
 	// Otherwise we configure the crash reporter from product.json
 	else {
 		const appCenter = product.appCenter;
-		// Disable Appcenter crash reporting if
-		// * --crash-reporter-directory is specified
-		// * enable-crash-reporter runtime argument is set to 'false'
-		// * --disable-crash-reporter command line parameter is set
-		if (appCenter && argvConfig['enable-crash-reporter'] && !args['disable-crash-reporter']) {
+		if (appCenter) {
 			const isWindows = (process.platform === 'win32');
 			const isLinux = (process.platform === 'linux');
 			const isDarwin = (process.platform === 'darwin');
@@ -410,11 +429,12 @@ function configureCrashReporter() {
 	// Start crash reporter for all processes
 	const productName = (product.crashReporter ? product.crashReporter.productName : undefined) || product.nameShort;
 	const companyName = (product.crashReporter ? product.crashReporter.companyName : undefined) || 'Microsoft';
+	const uploadToServer = Boolean(!process.env['VSCODE_DEV'] && submitURL && !crashReporterDirectory);
 	crashReporter.start({
-		companyName: companyName,
+		companyName,
 		productName: process.env['VSCODE_DEV'] ? `${productName} Dev` : productName,
 		submitURL,
-		uploadToServer: !crashReporterDirectory,
+		uploadToServer,
 		compress: true
 	});
 }
@@ -432,7 +452,7 @@ function getJSFlags(cliArgs) {
 	}
 
 	// Support max-memory flag
-	if (cliArgs['max-memory'] && !/max_old_space_size=(\d+)/g.exec(cliArgs['js-flags'])) {
+	if (cliArgs['max-memory'] && !/max_old_space_size=(\d+)/g.exec(cliArgs['js-flags'] ?? '')) {
 		jsFlags.push(`--max_old_space_size=${cliArgs['max-memory']}`);
 	}
 
@@ -528,15 +548,13 @@ function getCodeCachePath() {
  * @returns {Promise<string>}
  */
 function mkdirp(dir) {
-	const fs = require('fs');
-
 	return new Promise((resolve, reject) => {
 		fs.mkdir(dir, { recursive: true }, err => (err && err.code !== 'EEXIST') ? reject(err) : resolve(dir));
 	});
 }
 
 /**
- * @param {string | undefined} dir
+ * @param {string | undefined} dir
  * @returns {Promise<string | undefined>}
  */
 async function mkdirpIgnoreError(dir) {
@@ -556,6 +574,30 @@ async function mkdirpIgnoreError(dir) {
 //#region NLS Support
 
 /**
+ * @param {string} appLocale
+ * @returns string
+ */
+function processZhLocale(appLocale) {
+	if (appLocale.startsWith('zh')) {
+		const region = appLocale.split('-')[1];
+		// On Windows and macOS, Chinese languages returned by
+		// app.getPreferredSystemLanguages() start with zh-hans
+		// for Simplified Chinese or zh-hant for Traditional Chinese,
+		// so we can easily determine whether to use Simplified or Traditional.
+		// However, on Linux, Chinese languages returned by that same API
+		// are of the form zh-XY, where XY is a country code.
+		// For China (CN), Singapore (SG), and Malaysia (MY)
+		// country codes, assume they use Simplified Chinese.
+		// For other cases, assume they use Traditional.
+		if (['hans', 'cn', 'sg', 'my'].includes(region)) {
+			return 'zh-cn';
+		}
+		return 'zh-tw';
+	}
+	return appLocale;
+}
+
+/**
  * Resolve the NLS configuration
  *
  * @return {Promise<NLSConfiguration>}
@@ -566,57 +608,21 @@ async function resolveNlsConfiguration() {
 	// If that fails we fall back to English.
 	let nlsConfiguration = nlsConfigurationPromise ? await nlsConfigurationPromise : undefined;
 	if (!nlsConfiguration) {
+		// fallback to using app.getLocale() so that we have something for the locale.
+		// This can be removed after the move to Electron 22. Please note that getLocale() is only
+		// valid after we have received the app ready event. This is why the code is here.
+		osLocale ??= processZhLocale(app.getLocale().toLowerCase());
 
-		// Try to use the app locale. Please note that the app locale is only
-		// valid after we have received the app ready event. This is why the
-		// code is here.
-		let appLocale = app.getLocale();
-		if (!appLocale) {
-			nlsConfiguration = { locale: 'en', availableLanguages: {} };
-		} else {
-
-			// See above the comment about the loader and case sensitiviness
-			appLocale = appLocale.toLowerCase();
-
-			const { getNLSConfiguration } = require('./vs/base/node/languagePacks');
-			nlsConfiguration = await getNLSConfiguration(product.commit, userDataPath, metaDataFile, appLocale);
-			if (!nlsConfiguration) {
-				nlsConfiguration = { locale: appLocale, availableLanguages: {} };
-			}
+		const { getNLSConfiguration } = require('./vs/base/node/languagePacks');
+		nlsConfiguration = await getNLSConfiguration(product.commit, userDataPath, metaDataFile, osLocale, language);
+		if (!nlsConfiguration) {
+			nlsConfiguration = { locale: osLocale, availableLanguages: {} };
 		}
 	} else {
 		// We received a valid nlsConfig from a user defined locale
 	}
 
 	return nlsConfiguration;
-}
-
-/**
- * @param {string} content
- * @returns {string}
- */
-function stripComments(content) {
-	const regexp = /("(?:[^\\"]*(?:\\.)?)*")|('(?:[^\\']*(?:\\.)?)*')|(\/\*(?:\r?\n|.)*?\*\/)|(\/{2,}.*?(?:(?:\r?\n)|$))/g;
-
-	return content.replace(regexp, function (match, m1, m2, m3, m4) {
-		// Only one of m1, m2, m3, m4 matches
-		if (m3) {
-			// A block comment. Replace with nothing
-			return '';
-		} else if (m4) {
-			// A line comment. If it ends in \r?\n then keep it.
-			const length_1 = m4.length;
-			if (length_1 > 2 && m4[length_1 - 1] === '\n') {
-				return m4[length_1 - 2] === '\r' ? '\r\n' : '\n';
-			}
-			else {
-				return '';
-			}
-		} else {
-			// We match a string
-			return match;
-		}
-	});
 }
 
 /**

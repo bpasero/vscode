@@ -28,7 +28,7 @@ import { HotExitConfiguration } from 'vs/platform/files/common/files';
 import { ShutdownReason, ILifecycleService } from 'vs/workbench/services/lifecycle/common/lifecycle';
 import { IFileDialogService, ConfirmResult, IDialogService } from 'vs/platform/dialogs/common/dialogs';
 import { IWorkspaceContextService } from 'vs/platform/workspace/common/workspace';
-import { INativeHostService } from 'vs/platform/native/electron-sandbox/native';
+import { INativeHostService } from 'vs/platform/native/common/native';
 import { workbenchInstantiationService, TestServiceAccessor } from 'vs/workbench/test/electron-browser/workbenchTestServices';
 import { IInstantiationService } from 'vs/platform/instantiation/common/instantiation';
 import { TestConfigurationService } from 'vs/platform/configuration/test/common/testConfigurationService';
@@ -37,12 +37,13 @@ import { createEditorPart, registerTestFileEditor, TestBeforeShutdownEvent, Test
 import { MockContextKeyService } from 'vs/platform/keybinding/test/common/mockKeybindingService';
 import { IContextKeyService } from 'vs/platform/contextkey/common/contextkey';
 import { IEnvironmentService } from 'vs/platform/environment/common/environment';
-import { Workspace } from 'vs/platform/workspace/test/common/testWorkspace';
+import { TestWorkspace, Workspace } from 'vs/platform/workspace/test/common/testWorkspace';
 import { IProgressService } from 'vs/platform/progress/common/progress';
 import { IWorkingCopyEditorService } from 'vs/workbench/services/workingCopy/common/workingCopyEditorService';
-import { TestWorkingCopy } from 'vs/workbench/test/common/workbenchTestServices';
+import { TestContextService, TestWorkingCopy } from 'vs/workbench/test/common/workbenchTestServices';
 import { CancellationToken } from 'vs/base/common/cancellation';
 import { IWorkingCopyBackup } from 'vs/workbench/services/workingCopy/common/workingCopy';
+import { Event, Emitter } from 'vs/base/common/event';
 
 flakySuite('WorkingCopyBackupTracker (native)', function () {
 
@@ -61,9 +62,10 @@ flakySuite('WorkingCopyBackupTracker (native)', function () {
 			@IEditorService editorService: IEditorService,
 			@IEnvironmentService environmentService: IEnvironmentService,
 			@IProgressService progressService: IProgressService,
-			@IWorkingCopyEditorService workingCopyEditorService: IWorkingCopyEditorService
+			@IWorkingCopyEditorService workingCopyEditorService: IWorkingCopyEditorService,
+			@IEditorGroupsService editorGroupService: IEditorGroupsService
 		) {
-			super(workingCopyBackupService, filesConfigurationService, workingCopyService, lifecycleService, fileDialogService, dialogService, contextService, nativeHostService, logService, environmentService, progressService, workingCopyEditorService, editorService);
+			super(workingCopyBackupService, filesConfigurationService, workingCopyService, lifecycleService, fileDialogService, dialogService, contextService, nativeHostService, logService, environmentService, progressService, workingCopyEditorService, editorService, editorGroupService);
 		}
 
 		protected override getBackupScheduleDelay(): number {
@@ -74,12 +76,34 @@ flakySuite('WorkingCopyBackupTracker (native)', function () {
 			return super.whenReady;
 		}
 
+		get pendingBackupOperationCount(): number { return this.pendingBackupOperations.size; }
+
 		override dispose() {
 			super.dispose();
 
-			for (const [_, disposable] of this.pendingBackups) {
+			for (const [_, disposable] of this.pendingBackupOperations) {
 				disposable.dispose();
 			}
+		}
+
+		private readonly _onDidResume = this._register(new Emitter<void>());
+		readonly onDidResume = this._onDidResume.event;
+
+		private readonly _onDidSuspend = this._register(new Emitter<void>());
+		readonly onDidSuspend = this._onDidSuspend.event;
+
+		protected override suspendBackupOperations(): { resume: () => void } {
+			const { resume } = super.suspendBackupOperations();
+
+			this._onDidSuspend.fire();
+
+			return {
+				resume: () => {
+					resume();
+
+					this._onDidResume.fire();
+				}
+			};
 		}
 	}
 
@@ -88,9 +112,11 @@ flakySuite('WorkingCopyBackupTracker (native)', function () {
 	let workspaceBackupPath: string;
 
 	let accessor: TestServiceAccessor;
-	const disposables = new DisposableStore();
+	let disposables: DisposableStore;
 
 	setup(async () => {
+		disposables = new DisposableStore();
+
 		testDir = getRandomTestPath(tmpdir(), 'vsctests', 'backuprestorer');
 		backupHome = join(testDir, 'Backups');
 		const workspacesJsonPath = join(backupHome, 'workspaces.json');
@@ -98,7 +124,7 @@ flakySuite('WorkingCopyBackupTracker (native)', function () {
 		const workspaceResource = URI.file(isWindows ? 'c:\\workspace' : '/workspace');
 		workspaceBackupPath = join(backupHome, hash(workspaceResource.fsPath).toString(16));
 
-		const instantiationService = workbenchInstantiationService();
+		const instantiationService = workbenchInstantiationService(disposables);
 		accessor = instantiationService.createInstance(TestServiceAccessor);
 		disposables.add((<TextFileEditorModelManager>accessor.textFileService.files));
 
@@ -111,14 +137,14 @@ flakySuite('WorkingCopyBackupTracker (native)', function () {
 	});
 
 	teardown(async () => {
-		disposables.clear();
+		disposables.dispose();
 
 		return Promises.rm(testDir);
 	});
 
-	async function createTracker(autoSaveEnabled = false): Promise<{ accessor: TestServiceAccessor, part: EditorPart, tracker: TestWorkingCopyBackupTracker, instantiationService: IInstantiationService, cleanup: () => Promise<void> }> {
+	async function createTracker(autoSaveEnabled = false): Promise<{ accessor: TestServiceAccessor; part: EditorPart; tracker: TestWorkingCopyBackupTracker; instantiationService: IInstantiationService; cleanup: () => Promise<void> }> {
 		const workingCopyBackupService = new NodeTestWorkingCopyBackupService(testDir, workspaceBackupPath);
-		const instantiationService = workbenchInstantiationService();
+		const instantiationService = workbenchInstantiationService(disposables);
 		instantiationService.stub(IWorkingCopyBackupService, workingCopyBackupService);
 
 		const configurationService = new TestConfigurationService();
@@ -129,11 +155,11 @@ flakySuite('WorkingCopyBackupTracker (native)', function () {
 
 		instantiationService.stub(IFilesConfigurationService, new TestFilesConfigurationService(
 			<IContextKeyService>instantiationService.createInstance(MockContextKeyService),
-			configurationService
+			configurationService,
+			new TestContextService(TestWorkspace)
 		));
 
 		const part = await createEditorPart(instantiationService, disposables);
-
 		instantiationService.stub(IEditorGroupsService, part);
 
 		const editorService: EditorService = instantiationService.createInstance(EditorService);
@@ -208,7 +234,7 @@ flakySuite('WorkingCopyBackupTracker (native)', function () {
 		const model = accessor.textFileService.files.get(resource);
 
 		accessor.fileDialogService.setConfirmResult(ConfirmResult.CANCEL);
-		accessor.filesConfigurationService.onFilesConfigurationChange({ files: { hotExit: 'off' } });
+		accessor.filesConfigurationService.testOnFilesConfigurationChange({ files: { hotExit: 'off' } });
 
 		await model?.resolve();
 		model?.textEditorModel?.setValue('foo');
@@ -255,7 +281,7 @@ flakySuite('WorkingCopyBackupTracker (native)', function () {
 		const model = accessor.textFileService.files.get(resource);
 
 		accessor.fileDialogService.setConfirmResult(ConfirmResult.DONT_SAVE);
-		accessor.filesConfigurationService.onFilesConfigurationChange({ files: { hotExit: 'off' } });
+		accessor.filesConfigurationService.testOnFilesConfigurationChange({ files: { hotExit: 'off' } });
 
 		await model?.resolve();
 		model?.textEditorModel?.setValue('foo');
@@ -307,7 +333,7 @@ flakySuite('WorkingCopyBackupTracker (native)', function () {
 		const model = accessor.textFileService.files.get(resource);
 
 		accessor.fileDialogService.setConfirmResult(ConfirmResult.SAVE);
-		accessor.filesConfigurationService.onFilesConfigurationChange({ files: { hotExit: 'off' } });
+		accessor.filesConfigurationService.testOnFilesConfigurationChange({ files: { hotExit: 'off' } });
 
 		await model?.resolve();
 		model?.textEditorModel?.setValue('foo');
@@ -348,6 +374,48 @@ flakySuite('WorkingCopyBackupTracker (native)', function () {
 
 		const veto = await event.value;
 		assert.ok(veto);
+
+		const finalVeto = await event.finalValue?.();
+		assert.ok(finalVeto); // assert the tracker uses the internal finalVeto API
+
+		await cleanup();
+	});
+
+	test('onWillShutdown - pending backup operations canceled and tracker suspended/resumsed', async function () {
+		const { accessor, tracker, cleanup } = await createTracker();
+
+		const resource = toResource.call(this, '/path/index.txt');
+		await accessor.editorService.openEditor({ resource, options: { pinned: true } });
+
+		const model = accessor.textFileService.files.get(resource);
+
+		await model?.resolve();
+		model?.textEditorModel?.setValue('foo');
+		assert.strictEqual(accessor.workingCopyService.dirtyCount, 1);
+		assert.strictEqual(tracker.pendingBackupOperationCount, 1);
+
+		const onSuspend = Event.toPromise(tracker.onDidSuspend);
+
+		const event = new TestBeforeShutdownEvent();
+		event.reason = ShutdownReason.QUIT;
+		accessor.lifecycleService.fireBeforeShutdown(event);
+
+		await onSuspend;
+
+		assert.strictEqual(tracker.pendingBackupOperationCount, 0);
+
+		// Ops are suspended during shutdown!
+		model?.textEditorModel?.setValue('bar');
+		assert.strictEqual(accessor.workingCopyService.dirtyCount, 1);
+		assert.strictEqual(tracker.pendingBackupOperationCount, 0);
+
+		const onResume = Event.toPromise(tracker.onDidResume);
+		await event.value;
+
+		// Ops are resumed after shutdown!
+		model?.textEditorModel?.setValue('foo');
+		await onResume;
+		assert.strictEqual(tracker.pendingBackupOperationCount, 1);
 
 		await cleanup();
 	});
@@ -464,7 +532,7 @@ flakySuite('WorkingCopyBackupTracker (native)', function () {
 			const model = accessor.textFileService.files.get(resource);
 
 			// Set hot exit config
-			accessor.filesConfigurationService.onFilesConfigurationChange({ files: { hotExit: setting } });
+			accessor.filesConfigurationService.testOnFilesConfigurationChange({ files: { hotExit: setting } });
 
 			// Set empty workspace if required
 			if (!workspace) {
@@ -488,6 +556,7 @@ flakySuite('WorkingCopyBackupTracker (native)', function () {
 			accessor.lifecycleService.fireBeforeShutdown(event);
 
 			const veto = await event.value;
+			assert.ok(typeof event.finalValue === 'function'); // assert the tracker uses the internal finalVeto API
 			assert.strictEqual(accessor.workingCopyBackupService.discardedBackups.length, 0); // When hot exit is set, backups should never be cleaned since the confirm result is cancel
 			assert.strictEqual(veto, shouldVeto);
 

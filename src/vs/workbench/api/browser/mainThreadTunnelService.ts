@@ -4,11 +4,11 @@
  *--------------------------------------------------------------------------------------------*/
 
 import * as nls from 'vs/nls';
-import { MainThreadTunnelServiceShape, IExtHostContext, MainContext, ExtHostContext, ExtHostTunnelServiceShape, CandidatePortSource, PortAttributesProviderSelector } from 'vs/workbench/api/common/extHost.protocol';
-import { TunnelDto } from 'vs/workbench/api/common/extHostTunnelService';
-import { extHostNamedCustomer } from 'vs/workbench/api/common/extHostCustomers';
-import { CandidatePort, IRemoteExplorerService, makeAddress, PORT_AUTO_FORWARD_SETTING, PORT_AUTO_SOURCE_SETTING, PORT_AUTO_SOURCE_SETTING_OUTPUT, PORT_AUTO_SOURCE_SETTING_PROCESS } from 'vs/workbench/services/remote/common/remoteExplorerService';
-import { ITunnelProvider, ITunnelService, TunnelCreationOptions, TunnelProviderFeatures, TunnelOptions, RemoteTunnel, isPortPrivileged, ProvidedPortAttributes, PortAttributesProvider } from 'vs/platform/remote/common/tunnel';
+import { MainThreadTunnelServiceShape, MainContext, ExtHostContext, ExtHostTunnelServiceShape, CandidatePortSource, PortAttributesProviderSelector, TunnelDto } from 'vs/workbench/api/common/extHost.protocol';
+import { TunnelDtoConverter } from 'vs/workbench/api/common/extHostTunnelService';
+import { extHostNamedCustomer, IExtHostContext } from 'vs/workbench/services/extensions/common/extHostCustomers';
+import { CandidatePort, IRemoteExplorerService, makeAddress, PORT_AUTO_FORWARD_SETTING, PORT_AUTO_SOURCE_SETTING, PORT_AUTO_SOURCE_SETTING_OUTPUT, PORT_AUTO_SOURCE_SETTING_PROCESS, TunnelSource } from 'vs/workbench/services/remote/common/remoteExplorerService';
+import { ITunnelProvider, ITunnelService, TunnelCreationOptions, TunnelProviderFeatures, TunnelOptions, RemoteTunnel, ProvidedPortAttributes, PortAttributesProvider, TunnelProtocol } from 'vs/platform/tunnel/common/tunnel';
 import { Disposable } from 'vs/base/common/lifecycle';
 import type { TunnelDescription } from 'vs/platform/remote/common/remoteAuthorityResolver';
 import { INotificationService, Severity } from 'vs/platform/notification/common/notification';
@@ -97,18 +97,27 @@ export class MainThreadTunnelService extends Disposable implements MainThreadTun
 	}
 
 	async $openTunnel(tunnelOptions: TunnelOptions, source: string): Promise<TunnelDto | undefined> {
-		const tunnel = await this.remoteExplorerService.forward(tunnelOptions.remoteAddress, tunnelOptions.localAddressPort, tunnelOptions.label, source, false);
+		const tunnel = await this.remoteExplorerService.forward({
+			remote: tunnelOptions.remoteAddress,
+			local: tunnelOptions.localAddressPort,
+			name: tunnelOptions.label,
+			source: {
+				source: TunnelSource.Extension,
+				description: source
+			},
+			elevateIfNeeded: false
+		});
 		if (tunnel) {
 			if (!this.elevateionRetry
 				&& (tunnelOptions.localAddressPort !== undefined)
 				&& (tunnel.tunnelLocalPort !== undefined)
-				&& isPortPrivileged(tunnelOptions.localAddressPort)
+				&& this.tunnelService.isPortPrivileged(tunnelOptions.localAddressPort)
 				&& (tunnel.tunnelLocalPort !== tunnelOptions.localAddressPort)
 				&& this.tunnelService.canElevate) {
 
 				this.elevationPrompt(tunnelOptions, tunnel, source);
 			}
-			return TunnelDto.fromServiceTunnel(tunnel);
+			return TunnelDtoConverter.fromServiceTunnel(tunnel);
 		}
 		return undefined;
 	}
@@ -121,13 +130,22 @@ export class MainThreadTunnelService extends Disposable implements MainThreadTun
 				run: async () => {
 					this.elevateionRetry = true;
 					await this.remoteExplorerService.close({ host: tunnel.tunnelRemoteHost, port: tunnel.tunnelRemotePort });
-					await this.remoteExplorerService.forward(tunnelOptions.remoteAddress, tunnelOptions.localAddressPort, tunnelOptions.label, source, true);
+					await this.remoteExplorerService.forward({
+						remote: tunnelOptions.remoteAddress,
+						local: tunnelOptions.localAddressPort,
+						name: tunnelOptions.label,
+						source: {
+							source: TunnelSource.Extension,
+							description: source
+						},
+						elevateIfNeeded: true
+					});
 					this.elevateionRetry = false;
 				}
 			}]);
 	}
 
-	async $closeTunnel(remote: { host: string, port: number }): Promise<void> {
+	async $closeTunnel(remote: { host: string; port: number }): Promise<void> {
 		return this.remoteExplorerService.close(remote);
 	}
 
@@ -135,7 +153,9 @@ export class MainThreadTunnelService extends Disposable implements MainThreadTun
 		return (await this.tunnelService.tunnels).map(tunnel => {
 			return {
 				remoteAddress: { port: tunnel.tunnelRemotePort, host: tunnel.tunnelRemoteHost },
-				localAddress: tunnel.localAddress
+				localAddress: tunnel.localAddress,
+				privacy: tunnel.privacy,
+				protocol: tunnel.protocol
 			};
 		});
 	}
@@ -144,7 +164,7 @@ export class MainThreadTunnelService extends Disposable implements MainThreadTun
 		this.remoteExplorerService.onFoundNewCandidates(candidates);
 	}
 
-	async $setTunnelProvider(features: TunnelProviderFeatures): Promise<void> {
+	async $setTunnelProvider(features?: TunnelProviderFeatures): Promise<void> {
 		const tunnelProvider: ITunnelProvider = {
 			forwardPort: (tunnelOptions: TunnelOptions, tunnelCreationOptions: TunnelCreationOptions) => {
 				const forward = this._proxy.$forwardPort(tunnelOptions, tunnelCreationOptions);
@@ -159,6 +179,8 @@ export class MainThreadTunnelService extends Disposable implements MainThreadTun
 						localAddress: typeof tunnel.localAddress === 'string' ? tunnel.localAddress : makeAddress(tunnel.localAddress.host, tunnel.localAddress.port),
 						tunnelLocalPort: typeof tunnel.localAddress !== 'string' ? tunnel.localAddress.port : undefined,
 						public: tunnel.public,
+						privacy: tunnel.privacy,
+						protocol: tunnel.protocol ?? TunnelProtocol.Http,
 						dispose: async (silent?: boolean) => {
 							this.logService.trace(`ForwardedPorts: (MainThreadTunnelService) Closing tunnel from tunnel provider: ${tunnel?.remoteAddress.host}:${tunnel?.remoteAddress.port}`);
 							return this._proxy.$closeTunnel({ host: tunnel.remoteAddress.host, port: tunnel.remoteAddress.port }, silent);
@@ -167,7 +189,10 @@ export class MainThreadTunnelService extends Disposable implements MainThreadTun
 				});
 			}
 		};
-		this.tunnelService.setTunnelProvider(tunnelProvider, features);
+		this.tunnelService.setTunnelProvider(tunnelProvider);
+		if (features) {
+			this.tunnelService.setTunnelFeatures(features);
+		}
 	}
 
 	async $setCandidateFilter(): Promise<void> {
@@ -182,12 +207,12 @@ export class MainThreadTunnelService extends Disposable implements MainThreadTun
 			switch (source) {
 				case CandidatePortSource.None: {
 					Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration)
-						.registerDefaultConfigurations([{ 'remote.autoForwardPorts': false }]);
+						.registerDefaultConfigurations([{ overrides: { 'remote.autoForwardPorts': false } }]);
 					break;
 				}
 				case CandidatePortSource.Output: {
 					Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration)
-						.registerDefaultConfigurations([{ 'remote.autoForwardPortsSource': PORT_AUTO_SOURCE_SETTING_OUTPUT }]);
+						.registerDefaultConfigurations([{ overrides: { 'remote.autoForwardPortsSource': PORT_AUTO_SOURCE_SETTING_OUTPUT } }]);
 					break;
 				}
 				default: // Do nothing, the defaults for these settings should be used.

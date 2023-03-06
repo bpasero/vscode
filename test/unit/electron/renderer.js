@@ -56,7 +56,7 @@
 		['rmdir', 1],
 	].forEach((element) => {
 		intercept(element[0], element[1]);
-	})
+	});
 })();
 
 const { ipcRenderer } = require('electron');
@@ -72,19 +72,25 @@ if (util.inspect && util.inspect['defaultOptions']) {
 	util.inspect['defaultOptions'].customInspect = false;
 }
 
-let _tests_glob = '**/test/**/*.test.js';
+// VSCODE_GLOBALS: node_modules
+globalThis._VSCODE_NODE_MODULES = new Proxy(Object.create(null), { get: (_target, mod) => (require.__$__nodeRequire ?? require)(String(mod)) });
+
+// VSCODE_GLOBALS: package/product.json
+globalThis._VSCODE_PRODUCT_JSON = (require.__$__nodeRequire ?? require)('../../../product.json');
+globalThis._VSCODE_PACKAGE_JSON = (require.__$__nodeRequire ?? require)('../../../package.json');
+
+const _tests_glob = '**/test/**/*.test.js';
 let loader;
 let _out;
 
 function initLoader(opts) {
-	let outdir = opts.build ? 'out-build' : 'out';
+	const outdir = opts.build ? 'out-build' : 'out';
 	_out = path.join(__dirname, `../../../${outdir}`);
 
 	// setup loader
 	loader = require(`${_out}/vs/loader`);
 	const loaderConfig = {
 		nodeRequire: require,
-		nodeMain: __filename,
 		catchError: true,
 		baseUrl: bootstrap.fileUriFromPath(path.join(__dirname, '../../../src'), { isWindows: process.platform === 'win32' }),
 		paths: {
@@ -107,6 +113,12 @@ function createCoverageReport(opts) {
 		return coverage.createReport(opts.run || opts.runGlob);
 	}
 	return Promise.resolve(undefined);
+}
+
+function loadWorkbenchTestingUtilsModule() {
+	return new Promise((resolve, reject) => {
+		loader.require(['vs/workbench/test/common/utils'], resolve, reject);
+	});
 }
 
 function loadTestModules(opts) {
@@ -166,17 +178,31 @@ function loadTests(opts) {
 		});
 	});
 
-	return loadTestModules(opts).then(() => {
-		suite('Unexpected Errors & Loader Errors', function () {
-			test('should not have unexpected errors', function () {
-				const errors = _unexpectedErrors.concat(_loaderErrors);
-				if (errors.length) {
-					errors.forEach(function (stack) {
-						console.error('');
-						console.error(stack);
-					});
-					assert.ok(false, errors);
-				}
+	return loadWorkbenchTestingUtilsModule().then((workbenchTestingModule) => {
+		const assertCleanState = workbenchTestingModule.assertCleanState;
+
+		suite('Tests are using suiteSetup and setup correctly', () => {
+			test('assertCleanState - check that registries are clean at the start of test running', () => {
+				assertCleanState();
+			});
+		});
+
+		return loadTestModules(opts).then(() => {
+			suite('Unexpected Errors & Loader Errors', function () {
+				test('should not have unexpected errors', function () {
+					const errors = _unexpectedErrors.concat(_loaderErrors);
+					if (errors.length) {
+						errors.forEach(function (stack) {
+							console.error('');
+							console.error(stack);
+						});
+						assert.ok(false, errors);
+					}
+				});
+
+				test('assertCleanState - check that registries are clean and objects are disposed at the end of test running', () => {
+					assertCleanState();
+				});
 			});
 		});
 	});
@@ -224,6 +250,10 @@ function serializeError(err) {
 function safeStringify(obj) {
 	const seen = new Set();
 	return JSON.stringify(obj, (key, value) => {
+		if (value === undefined) {
+			return '[undefined]';
+		}
+
 		if (isObject(value) || Array.isArray(value)) {
 			if (seen.has(value)) {
 				return '[Circular]';
@@ -275,7 +305,7 @@ function runTests(opts) {
 			mocha.grep(opts.grep);
 		}
 
-		if (!opts.debug) {
+		if (!opts.dev) {
 			mocha.reporter(IPCReporter);
 		}
 
@@ -285,7 +315,7 @@ function runTests(opts) {
 			});
 		});
 
-		if (opts.debug) {
+		if (opts.dev) {
 			runner.on('fail', (test, err) => {
 
 				console.error(test.fullTitle());

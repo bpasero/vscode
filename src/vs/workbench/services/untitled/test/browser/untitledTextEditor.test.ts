@@ -10,26 +10,33 @@ import { IInstantiationService } from 'vs/platform/instantiation/common/instanti
 import { IUntitledTextEditorService, UntitledTextEditorService } from 'vs/workbench/services/untitled/common/untitledTextEditorService';
 import { workbenchInstantiationService, TestServiceAccessor } from 'vs/workbench/test/browser/workbenchTestServices';
 import { snapshotToString } from 'vs/workbench/services/textfile/common/textfiles';
-import { ModesRegistry, PLAINTEXT_MODE_ID } from 'vs/editor/common/modes/modesRegistry';
-import { IIdentifiedSingleEditOperation } from 'vs/editor/common/model';
+import { PLAINTEXT_LANGUAGE_ID } from 'vs/editor/common/languages/modesRegistry';
+import { ISingleEditOperation } from 'vs/editor/common/core/editOperation';
 import { Range } from 'vs/editor/common/core/range';
 import { UntitledTextEditorInput } from 'vs/workbench/services/untitled/common/untitledTextEditorInput';
 import { IUntitledTextEditorModel } from 'vs/workbench/services/untitled/common/untitledTextEditorModel';
 import { CancellationToken } from 'vs/base/common/cancellation';
-import { EditorInputCapabilities } from 'vs/workbench/common/editor';
+import { EditorInputCapabilities, isUntitledWithAssociatedResource } from 'vs/workbench/common/editor';
+import { DisposableStore } from 'vs/base/common/lifecycle';
+import { isReadable, isReadableStream } from 'vs/base/common/stream';
+import { readableToBuffer, streamToBuffer, VSBufferReadable, VSBufferReadableStream } from 'vs/base/common/buffer';
+import { LanguageDetectionLanguageEventSource } from 'vs/workbench/services/languageDetection/common/languageDetectionWorkerService';
 
 suite('Untitled text editors', () => {
 
+	let disposables: DisposableStore;
 	let instantiationService: IInstantiationService;
 	let accessor: TestServiceAccessor;
 
 	setup(() => {
-		instantiationService = workbenchInstantiationService();
+		disposables = new DisposableStore();
+		instantiationService = workbenchInstantiationService(undefined, disposables);
 		accessor = instantiationService.createInstance(TestServiceAccessor);
 	});
 
 	teardown(() => {
 		(accessor.untitledTextEditorService as UntitledTextEditorService).dispose();
+		disposables.dispose();
 	});
 
 	test('basics', async () => {
@@ -39,6 +46,7 @@ suite('Untitled text editors', () => {
 		const input1 = instantiationService.createInstance(UntitledTextEditorInput, service.create());
 		await input1.resolve();
 		assert.strictEqual(service.get(input1.resource), input1.model);
+		assert.ok(!isUntitledWithAssociatedResource(input1.resource));
 
 		assert.ok(service.get(input1.resource));
 		assert.ok(!service.get(URI.file('testing')));
@@ -51,8 +59,8 @@ suite('Untitled text editors', () => {
 		const input2 = instantiationService.createInstance(UntitledTextEditorInput, service.create());
 		assert.strictEqual(service.get(input2.resource), input2.model);
 
-		// asResourceEditorInput()
-		const untypedInput = input1.asResourceEditorInput(0);
+		// toUntyped()
+		const untypedInput = input1.toUntyped({ preserveViewState: 0 });
 		assert.strictEqual(untypedInput.forceUntitled, true);
 
 		// get()
@@ -81,8 +89,13 @@ suite('Untitled text editors', () => {
 
 		assert.ok(input2.isDirty());
 
-		const dirtyUntypedInput = input2.asResourceEditorInput(0);
+		const dirtyUntypedInput = input2.toUntyped({ preserveViewState: 0 });
 		assert.strictEqual(dirtyUntypedInput.contents, 'foo bar');
+		assert.strictEqual(dirtyUntypedInput.resource, undefined);
+
+		const dirtyUntypedInputWithoutContent = input2.toUntyped();
+		assert.strictEqual(dirtyUntypedInputWithoutContent.resource?.toString(), input2.resource.toString());
+		assert.strictEqual(dirtyUntypedInputWithoutContent.contents, undefined);
 
 		assert.ok(workingCopyService.isDirty(input2.resource));
 		assert.strictEqual(workingCopyService.dirtyCount, 1);
@@ -125,6 +138,7 @@ suite('Untitled text editors', () => {
 		});
 
 		const model = service.create({ associatedResource: file });
+		assert.ok(isUntitledWithAssociatedResource(model.resource));
 		const untitled = instantiationService.createInstance(UntitledTextEditorInput, model);
 		assert.ok(untitled.isDirty());
 		assert.strictEqual(model, onDidChangeDirtyModel);
@@ -209,6 +223,17 @@ suite('Untitled text editors', () => {
 		const untitled = instantiationService.createInstance(UntitledTextEditorInput, service.create({ initialValue: 'Hello World' }));
 		assert.ok(untitled.isDirty());
 
+		const backup = (await untitled.model.backup(CancellationToken.None)).content;
+		if (isReadableStream(backup)) {
+			const value = await streamToBuffer(backup as VSBufferReadableStream);
+			assert.strictEqual(value.toString(), 'Hello World');
+		} else if (isReadable(backup)) {
+			const value = readableToBuffer(backup as VSBufferReadable);
+			assert.strictEqual(value.toString(), 'Hello World');
+		} else {
+			assert.fail('Missing untitled backup');
+		}
+
 		// dirty
 		const model = await untitled.resolve();
 		assert.ok(model.isDirty());
@@ -226,7 +251,7 @@ suite('Untitled text editors', () => {
 		const service = accessor.untitledTextEditorService;
 		const input = service.create();
 
-		assert.strictEqual(input.getMode(), defaultLanguage);
+		assert.strictEqual(input.getLanguageId(), defaultLanguage);
 
 		config.setUserConfiguration('files', { 'defaultLanguage': undefined });
 
@@ -237,78 +262,127 @@ suite('Untitled text editors', () => {
 		const config = accessor.testConfigurationService;
 		config.setUserConfiguration('files', { 'defaultLanguage': '${activeEditorLanguage}' });
 
-		accessor.editorService.activeTextEditorMode = 'typescript';
+		accessor.editorService.activeTextEditorLanguageId = 'typescript';
 
 		const service = accessor.untitledTextEditorService;
 		const model = service.create();
 
-		assert.strictEqual(model.getMode(), 'typescript');
+		assert.strictEqual(model.getLanguageId(), 'typescript');
 
 		config.setUserConfiguration('files', { 'defaultLanguage': undefined });
-		accessor.editorService.activeTextEditorMode = undefined;
+		accessor.editorService.activeTextEditorLanguageId = undefined;
 
 		model.dispose();
 	});
 
-	test('created with mode overrides files.defaultLanguage setting', () => {
-		const mode = 'typescript';
+	test('created with language overrides files.defaultLanguage setting', () => {
+		const language = 'typescript';
 		const defaultLanguage = 'javascript';
 		const config = accessor.testConfigurationService;
 		config.setUserConfiguration('files', { 'defaultLanguage': defaultLanguage });
 
 		const service = accessor.untitledTextEditorService;
-		const input = service.create({ mode });
+		const input = service.create({ languageId: language });
 
-		assert.strictEqual(input.getMode(), mode);
+		assert.strictEqual(input.getLanguageId(), language);
 
 		config.setUserConfiguration('files', { 'defaultLanguage': undefined });
 
 		input.dispose();
 	});
 
-	test('can change mode afterwards', async () => {
-		const mode = 'untitled-input-test';
+	test('can change language afterwards', async () => {
+		const languageId = 'untitled-input-test';
 
-		ModesRegistry.registerLanguage({
-			id: mode,
+		const registration = accessor.languageService.registerLanguage({
+			id: languageId,
 		});
 
 		const service = accessor.untitledTextEditorService;
-		const input = instantiationService.createInstance(UntitledTextEditorInput, service.create({ mode }));
+		const input = instantiationService.createInstance(UntitledTextEditorInput, service.create({ languageId: languageId }));
 
-		assert.ok(input.model.hasModeSetExplicitly);
-		assert.strictEqual(input.getMode(), mode);
+		assert.strictEqual(input.getLanguageId(), languageId);
 
 		const model = await input.resolve();
-		assert.strictEqual(model.getMode(), mode);
+		assert.strictEqual(model.getLanguageId(), languageId);
 
-		input.setMode('plaintext');
+		input.setLanguageId(PLAINTEXT_LANGUAGE_ID);
 
-		assert.strictEqual(input.getMode(), PLAINTEXT_MODE_ID);
+		assert.strictEqual(input.getLanguageId(), PLAINTEXT_LANGUAGE_ID);
 
 		input.dispose();
 		model.dispose();
+		registration.dispose();
 	});
 
-	test('remembers that mode was set explicitly', async () => {
-		const mode = 'untitled-input-test';
+	test('remembers that language was set explicitly', async () => {
+		const language = 'untitled-input-test';
 
-		ModesRegistry.registerLanguage({
-			id: mode,
+		const registration = accessor.languageService.registerLanguage({
+			id: language,
 		});
 
 		const service = accessor.untitledTextEditorService;
 		const model = service.create();
 		const input = instantiationService.createInstance(UntitledTextEditorInput, model);
 
-		assert.ok(!input.model.hasModeSetExplicitly);
-		input.setMode('plaintext');
-		assert.ok(input.model.hasModeSetExplicitly);
+		assert.ok(!input.model.hasLanguageSetExplicitly);
+		input.setLanguageId(PLAINTEXT_LANGUAGE_ID);
+		assert.ok(input.model.hasLanguageSetExplicitly);
 
-		assert.strictEqual(input.getMode(), PLAINTEXT_MODE_ID);
+		assert.strictEqual(input.getLanguageId(), PLAINTEXT_LANGUAGE_ID);
 
 		input.dispose();
 		model.dispose();
+		registration.dispose();
+	});
+
+	// Issue #159202
+	test('remembers that language was set explicitly if set by another source (i.e. ModelService)', async () => {
+		const language = 'untitled-input-test';
+
+		const registration = accessor.languageService.registerLanguage({
+			id: language,
+		});
+
+		const service = accessor.untitledTextEditorService;
+		const model = service.create();
+		const input = instantiationService.createInstance(UntitledTextEditorInput, model);
+		await input.resolve();
+
+		assert.ok(!input.model.hasLanguageSetExplicitly);
+		model.textEditorModel!.setLanguage(accessor.languageService.createById(language));
+		assert.ok(input.model.hasLanguageSetExplicitly);
+
+		assert.strictEqual(model.getLanguageId(), language);
+
+		model.dispose();
+		registration.dispose();
+	});
+
+	test('Language is not set explicitly if set by language detection source', async () => {
+		const language = 'untitled-input-test';
+
+		const registration = accessor.languageService.registerLanguage({
+			id: language,
+		});
+
+		const service = accessor.untitledTextEditorService;
+		const model = service.create();
+		const input = instantiationService.createInstance(UntitledTextEditorInput, model);
+		await input.resolve();
+
+		assert.ok(!input.model.hasLanguageSetExplicitly);
+		model.textEditorModel!.setLanguage(
+			accessor.languageService.createById(language),
+			// This is really what this is testing
+			LanguageDetectionLanguageEventSource);
+		assert.ok(!input.model.hasLanguageSetExplicitly);
+
+		assert.strictEqual(model.getLanguageId(), language);
+
+		model.dispose();
+		registration.dispose();
 	});
 
 	test('service#onDidChangeEncoding', async () => {
@@ -471,8 +545,8 @@ suite('Untitled text editors', () => {
 		model.textEditorModel?.setValue('Hello\nWorld');
 		assert.strictEqual(counter, 7);
 
-		function createSingleEditOp(text: string, positionLineNumber: number, positionColumn: number, selectionLineNumber: number = positionLineNumber, selectionColumn: number = positionColumn): IIdentifiedSingleEditOperation {
-			let range = new Range(
+		function createSingleEditOp(text: string, positionLineNumber: number, positionColumn: number, selectionLineNumber: number = positionLineNumber, selectionColumn: number = positionColumn): ISingleEditOperation {
+			const range = new Range(
 				selectionLineNumber,
 				selectionColumn,
 				positionLineNumber,
@@ -480,7 +554,6 @@ suite('Untitled text editors', () => {
 			);
 
 			return {
-				identifier: null,
 				range,
 				text,
 				forceMoveMarkers: false
@@ -541,36 +614,4 @@ suite('Untitled text editors', () => {
 		input.dispose();
 		model.dispose();
 	});
-
-	test('backup and restore (simple)', async function () {
-		return testBackupAndRestore('Some very small file text content.');
-	});
-
-	test('backup and restore (large, #121347)', async function () {
-		const largeContent = '국어한\n'.repeat(100000);
-		return testBackupAndRestore(largeContent);
-	});
-
-	async function testBackupAndRestore(content: string) {
-		const service = accessor.untitledTextEditorService;
-		const originalInput = instantiationService.createInstance(UntitledTextEditorInput, service.create());
-		const restoredInput = instantiationService.createInstance(UntitledTextEditorInput, service.create());
-
-		const originalModel = await originalInput.resolve();
-		originalModel.textEditorModel?.setValue(content);
-
-		const backup = await originalModel.backup(CancellationToken.None);
-		const modelRestoredIdentifier = { typeId: originalModel.typeId, resource: restoredInput.resource };
-		await accessor.workingCopyBackupService.backup(modelRestoredIdentifier, backup.content);
-
-		const restoredModel = await restoredInput.resolve();
-
-		assert.strictEqual(restoredModel.textEditorModel?.getValue(), content);
-		assert.strictEqual(restoredModel.isDirty(), true);
-
-		originalInput.dispose();
-		originalModel.dispose();
-		restoredInput.dispose();
-		restoredModel.dispose();
-	}
 });

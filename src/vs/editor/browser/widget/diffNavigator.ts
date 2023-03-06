@@ -8,9 +8,13 @@ import { Emitter, Event } from 'vs/base/common/event';
 import { Disposable } from 'vs/base/common/lifecycle';
 import * as objects from 'vs/base/common/objects';
 import { IDiffEditor } from 'vs/editor/browser/editorBrowser';
-import { ICursorPositionChangedEvent } from 'vs/editor/common/controller/cursorEvents';
+import { ICursorPositionChangedEvent } from 'vs/editor/common/cursorEvents';
 import { Range } from 'vs/editor/common/core/range';
-import { ILineChange, ScrollType } from 'vs/editor/common/editorCommon';
+import { ILineChange } from 'vs/editor/common/diff/smartLinesDiffComputer';
+import { ScrollType } from 'vs/editor/common/editorCommon';
+import { AudioCue, IAudioCueService } from 'vs/platform/audioCues/browser/audioCueService';
+import { ICodeEditorService } from 'vs/editor/browser/services/codeEditorService';
+import { IAccessibilityService } from 'vs/platform/accessibility/common/accessibility';
 
 
 interface IDiffRange {
@@ -22,12 +26,14 @@ export interface Options {
 	followsCaret?: boolean;
 	ignoreCharChanges?: boolean;
 	alwaysRevealFirst?: boolean;
+	findResultLoop?: boolean;
 }
 
 const defaultOptions: Options = {
 	followsCaret: true,
 	ignoreCharChanges: true,
-	alwaysRevealFirst: true
+	alwaysRevealFirst: true,
+	findResultLoop: true
 };
 
 export interface IDiffNavigator {
@@ -54,7 +60,13 @@ export class DiffNavigator extends Disposable implements IDiffNavigator {
 	private ranges: IDiffRange[];
 	private ignoreSelectionChange: boolean;
 
-	constructor(editor: IDiffEditor, options: Options = {}) {
+	constructor(
+		editor: IDiffEditor,
+		options: Options = {},
+		@IAudioCueService private readonly _audioCueService: IAudioCueService,
+		@ICodeEditorService private readonly _codeEditorService: ICodeEditorService,
+		@IAccessibilityService private readonly _accessibilityService: IAccessibilityService
+	) {
 		super();
 		this._editor = editor;
 		this._options = objects.mixin(options, defaultOptions, false);
@@ -75,6 +87,7 @@ export class DiffNavigator extends Disposable implements IDiffNavigator {
 				if (this.ignoreSelectionChange) {
 					return;
 				}
+				this._updateAccessibilityState(e.position.lineNumber);
 				this.nextIdx = -1;
 			}));
 		}
@@ -89,7 +102,7 @@ export class DiffNavigator extends Disposable implements IDiffNavigator {
 	}
 
 	private _init(): void {
-		let changes = this._editor.getLineChanges();
+		const changes = this._editor.getLineChanges();
 		if (!changes) {
 			return;
 		}
@@ -132,36 +145,37 @@ export class DiffNavigator extends Disposable implements IDiffNavigator {
 					});
 
 				} else {
-					this.ranges.push({
-						rhs: true,
-						range: new Range(lineChange.modifiedStartLineNumber, 1, lineChange.modifiedStartLineNumber, 1)
-					});
+					if (lineChange.modifiedEndLineNumber === 0) {
+						// a deletion
+						this.ranges.push({
+							rhs: true,
+							range: new Range(lineChange.modifiedStartLineNumber, 1, lineChange.modifiedStartLineNumber + 1, 1)
+						});
+					} else {
+						// an insertion or modification
+						this.ranges.push({
+							rhs: true,
+							range: new Range(lineChange.modifiedStartLineNumber, 1, lineChange.modifiedEndLineNumber + 1, 1)
+						});
+					}
 				}
 			});
 		}
 
 		// sort
-		this.ranges.sort((left, right) => {
-			if (left.range.getStartPosition().isBeforeOrEqual(right.range.getStartPosition())) {
-				return -1;
-			} else if (right.range.getStartPosition().isBeforeOrEqual(left.range.getStartPosition())) {
-				return 1;
-			} else {
-				return 0;
-			}
-		});
+		this.ranges.sort((left, right) => Range.compareRangesUsingStarts(left.range, right.range));
 		this._onDidUpdate.fire(this);
 	}
 
 	private _initIdx(fwd: boolean): void {
 		let found = false;
-		let position = this._editor.getPosition();
+		const position = this._editor.getPosition();
 		if (!position) {
 			this.nextIdx = 0;
 			return;
 		}
 		for (let i = 0, len = this.ranges.length; i < len && !found; i++) {
-			let range = this.ranges[i].range;
+			const range = this.ranges[i].range;
 			if (position.isBeforeOrEqual(range.getStartPosition())) {
 				this.nextIdx = i + (fwd ? 0 : -1);
 				found = true;
@@ -198,14 +212,38 @@ export class DiffNavigator extends Disposable implements IDiffNavigator {
 			}
 		}
 
-		let info = this.ranges[this.nextIdx];
+		const info = this.ranges[this.nextIdx];
 		this.ignoreSelectionChange = true;
 		try {
-			let pos = info.range.getStartPosition();
+			const pos = info.range.getStartPosition();
 			this._editor.setPosition(pos);
-			this._editor.revealPositionInCenter(pos, scrollType);
+			this._editor.revealRangeInCenter(info.range, scrollType);
+			this._updateAccessibilityState(pos.lineNumber, true);
 		} finally {
 			this.ignoreSelectionChange = false;
+		}
+	}
+
+	_updateAccessibilityState(lineNumber: number, jumpToChange?: boolean): void {
+		const modifiedEditor = this._editor.getModel()?.modified;
+		if (!modifiedEditor) {
+			return;
+		}
+		const insertedOrModified = modifiedEditor.getLineDecorations(lineNumber).find(l => l.options.className === 'line-insert');
+		if (insertedOrModified) {
+			this._audioCueService.playAudioCue(AudioCue.diffLineModified, true);
+		} else if (jumpToChange) {
+			// The modified editor does not include deleted lines, but when
+			// we are moved to the area where lines were deleted, play this cue
+			this._audioCueService.playAudioCue(AudioCue.diffLineDeleted, true);
+		} else {
+			return;
+		}
+
+		const codeEditor = this._codeEditorService.getActiveCodeEditor();
+		if (jumpToChange && codeEditor && insertedOrModified && this._accessibilityService.isScreenReaderOptimized()) {
+			codeEditor.setSelection({ startLineNumber: lineNumber, startColumn: 0, endLineNumber: lineNumber, endColumn: Number.MAX_VALUE });
+			codeEditor.writeScreenReaderContent('diff-navigation');
 		}
 	}
 
@@ -214,11 +252,29 @@ export class DiffNavigator extends Disposable implements IDiffNavigator {
 	}
 
 	next(scrollType: ScrollType = ScrollType.Smooth): void {
+		if (!this.canNavigateNext()) {
+			return;
+		}
 		this._move(true, scrollType);
 	}
 
 	previous(scrollType: ScrollType = ScrollType.Smooth): void {
+		if (!this.canNavigatePrevious()) {
+			return;
+		}
 		this._move(false, scrollType);
+	}
+
+	canNavigateNext(): boolean {
+		return this.canNavigateLoop() || this.nextIdx < this.ranges.length - 1;
+	}
+
+	canNavigatePrevious(): boolean {
+		return this.canNavigateLoop() || this.nextIdx !== 0;
+	}
+
+	canNavigateLoop(): boolean {
+		return Boolean(this._options.findResultLoop);
 	}
 
 	override dispose(): void {

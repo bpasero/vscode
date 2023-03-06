@@ -16,8 +16,9 @@ import { createDecorator } from 'vs/platform/instantiation/common/instantiation'
 import { ITelemetryData } from 'vs/platform/telemetry/common/telemetry';
 import { Event } from 'vs/base/common/event';
 import * as paths from 'vs/base/common/path';
-import { isPromiseCanceledError } from 'vs/base/common/errors';
+import { isCancellationError } from 'vs/base/common/errors';
 import { TextSearchCompleteMessageType } from 'vs/workbench/services/search/common/searchExtTypes';
+import { isThenable } from 'vs/base/common/async';
 
 export { TextSearchCompleteMessageType };
 
@@ -40,7 +41,7 @@ export const ISearchService = createDecorator<ISearchService>('searchService');
  */
 export interface ISearchService {
 	readonly _serviceBrand: undefined;
-	textSearch(query: ITextQuery, token?: CancellationToken, onProgress?: (result: ISearchProgressItem) => void): Promise<ISearchComplete>;
+	textSearch(query: ITextQuery, token?: CancellationToken, onProgress?: (result: ISearchProgressItem) => void, notebookURIs?: Set<URI>): Promise<ISearchComplete>;
 	fileSearch(query: IFileQuery, token?: CancellationToken): Promise<ISearchComplete>;
 	clearCache(cacheKey: string): Promise<void>;
 	registerSearchResultProvider(scheme: string, type: SearchProviderType, provider: ISearchResultProvider): IDisposable;
@@ -68,6 +69,7 @@ export interface IFolderQuery<U extends UriComponents = URI> {
 	fileEncoding?: string;
 	disregardIgnoreFiles?: boolean;
 	disregardGlobalIgnoreFiles?: boolean;
+	disregardParentIgnoreFiles?: boolean;
 	ignoreSymlinks?: boolean;
 }
 
@@ -127,7 +129,6 @@ export const enum QueryType {
 
 /* __GDPR__FRAGMENT__
 	"IPatternInfo" : {
-		"pattern" : { "classification": "CustomerContent", "purpose": "FeatureInsight" },
 		"isRegExp": { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
 		"isWordMatch": { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
 		"wordSeparators": { "classification": "SystemMetaData", "purpose": "FeatureInsight" },
@@ -172,6 +173,7 @@ export interface ISearchRange {
 export interface ITextSearchResultPreview {
 	text: string;
 	matches: ISearchRange | ISearchRange[];
+	cellFragment?: string;
 }
 
 export interface ITextSearchMatch {
@@ -220,7 +222,7 @@ export interface ISearchCompleteStats {
 
 export interface ISearchComplete extends ISearchCompleteStats {
 	results: IFileMatch[];
-	exit?: SearchCompletionExitCode
+	exit?: SearchCompletionExitCode;
 }
 
 export const enum SearchCompletionExitCode {
@@ -346,6 +348,11 @@ export class OneLineRange extends SearchRange {
 	}
 }
 
+export const enum ViewMode {
+	List = 'list',
+	Tree = 'tree'
+}
+
 export const enum SearchSortOrder {
 	Default = 'default',
 	FileNames = 'fileNames',
@@ -363,6 +370,7 @@ export interface ISearchConfigurationProperties {
 	 */
 	useIgnoreFiles: boolean;
 	useGlobalIgnoreFiles: boolean;
+	useParentIgnoreFiles: boolean;
 	followSymlinks: boolean;
 	smartCase: boolean;
 	globalFindClipboard: boolean;
@@ -372,6 +380,7 @@ export interface ISearchConfigurationProperties {
 	usePCRE2: boolean;
 	actionsPosition: 'auto' | 'right';
 	maintainFileSearchCache: boolean;
+	maxResults: number | null;
 	collapseResults: 'auto' | 'alwaysCollapse' | 'alwaysExpand';
 	searchOnType: boolean;
 	seedOnFocus: boolean;
@@ -379,12 +388,20 @@ export interface ISearchConfigurationProperties {
 	searchOnTypeDebouncePeriod: number;
 	mode: 'view' | 'reuseEditor' | 'newEditor';
 	searchEditor: {
-		doubleClickBehaviour: 'selectWord' | 'goToLocation' | 'openLocationToSide',
-		reusePriorSearchConfiguration: boolean,
-		defaultNumberOfContextLines: number | null,
-		experimental: {}
+		doubleClickBehaviour: 'selectWord' | 'goToLocation' | 'openLocationToSide';
+		reusePriorSearchConfiguration: boolean;
+		defaultNumberOfContextLines: number | null;
+		experimental: {};
 	};
 	sortOrder: SearchSortOrder;
+	decorations: {
+		colors: boolean;
+		badges: boolean;
+	};
+	defaultViewMode: ViewMode;
+	experimental: {
+		notebookSearch: boolean;
+	};
 }
 
 export interface ISearchConfiguration extends IFilesConfiguration {
@@ -462,7 +479,7 @@ export class SearchError extends Error {
 export function deserializeSearchError(error: Error): SearchError {
 	const errorMsg = error.message;
 
-	if (isPromiseCanceledError(error)) {
+	if (isCancellationError(error)) {
 		return new SearchError(errorMsg, SearchErrorCode.canceled);
 	}
 
@@ -527,8 +544,8 @@ export interface ISearchEngineSuccess {
 export interface ISerializedSearchError {
 	type: 'error';
 	error: {
-		message: string,
-		stack: string
+		message: string;
+		stack: string;
 	};
 }
 
@@ -638,6 +655,14 @@ export class QueryGlobTester {
 		}
 	}
 
+	matchesExcludesSync(testPath: string, basename?: string, hasSibling?: (name: string) => boolean): boolean {
+		if (this._parsedExcludeExpression && this._parsedExcludeExpression(testPath, basename, hasSibling)) {
+			return true;
+		}
+
+		return false;
+	}
+
 	/**
 	 * Guaranteed sync - siblingsFn should not return a promise.
 	 */
@@ -654,22 +679,29 @@ export class QueryGlobTester {
 	}
 
 	/**
-	 * Guaranteed async.
+	 * Evaluating the exclude expression is only async if it includes sibling clauses. As an optimization, avoid doing anything with Promises
+	 * unless the expression is async.
 	 */
-	includedInQuery(testPath: string, basename?: string, hasSibling?: (name: string) => boolean | Promise<boolean>): Promise<boolean> {
-		const excludeP = Promise.resolve(this._parsedExcludeExpression(testPath, basename, hasSibling)).then(result => !!result);
+	includedInQuery(testPath: string, basename?: string, hasSibling?: (name: string) => boolean | Promise<boolean>): Promise<boolean> | boolean {
+		const excluded = this._parsedExcludeExpression(testPath, basename, hasSibling);
 
-		return excludeP.then(excluded => {
-			if (excluded) {
-				return false;
-			}
-
+		const isIncluded = () => {
 			return this._parsedIncludeExpression ?
-				Promise.resolve(this._parsedIncludeExpression(testPath, basename, hasSibling)).then(result => !!result) :
-				Promise.resolve(true);
-		}).then(included => {
-			return included;
-		});
+				!!(this._parsedIncludeExpression(testPath, basename, hasSibling)) :
+				true;
+		};
+
+		if (isThenable(excluded)) {
+			return excluded.then(excluded => {
+				if (excluded) {
+					return false;
+				}
+
+				return isIncluded();
+			});
+		}
+
+		return isIncluded();
 	}
 
 	hasSiblingExcludeClauses(): boolean {
@@ -685,4 +717,42 @@ function hasSiblingClauses(pattern: glob.IExpression): boolean {
 	}
 
 	return false;
+}
+
+export function hasSiblingPromiseFn(siblingsFn?: () => Promise<string[]>) {
+	if (!siblingsFn) {
+		return undefined;
+	}
+
+	let siblings: Promise<Record<string, true>>;
+	return (name: string) => {
+		if (!siblings) {
+			siblings = (siblingsFn() || Promise.resolve([]))
+				.then(list => list ? listToMap(list) : {});
+		}
+		return siblings.then(map => !!map[name]);
+	};
+}
+
+export function hasSiblingFn(siblingsFn?: () => string[]) {
+	if (!siblingsFn) {
+		return undefined;
+	}
+
+	let siblings: Record<string, true>;
+	return (name: string) => {
+		if (!siblings) {
+			const list = siblingsFn();
+			siblings = list ? listToMap(list) : {};
+		}
+		return !!siblings[name];
+	};
+}
+
+function listToMap(list: string[]) {
+	const map: Record<string, true> = {};
+	for (const key of list) {
+		map[key] = true;
+	}
+	return map;
 }

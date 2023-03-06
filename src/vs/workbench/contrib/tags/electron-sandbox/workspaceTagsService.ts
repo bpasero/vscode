@@ -4,16 +4,15 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { sha1Hex } from 'vs/base/browser/hash';
-import { IFileService, IResolveFileResult, IFileStat } from 'vs/platform/files/common/files';
+import { IFileService, IFileStatResult, IFileStat } from 'vs/platform/files/common/files';
 import { IWorkspaceContextService, WorkbenchState, IWorkspace } from 'vs/platform/workspace/common/workspace';
 import { IWorkbenchEnvironmentService } from 'vs/workbench/services/environment/common/environmentService';
 import { ITextFileService, ITextFileContent } from 'vs/workbench/services/textfile/common/textfiles';
 import { URI } from 'vs/base/common/uri';
 import { Schemas } from 'vs/base/common/network';
-import { registerSingleton } from 'vs/platform/instantiation/common/extensions';
+import { InstantiationType, registerSingleton } from 'vs/platform/instantiation/common/extensions';
 import { IWorkspaceTagsService, Tags } from 'vs/workbench/contrib/tags/common/workspaceTags';
 import { getHashedRemotesFromConfig } from 'vs/workbench/contrib/tags/electron-sandbox/workspaceTags';
-import { IProductService } from 'vs/platform/product/common/productService';
 import { splitLines } from 'vs/base/common/strings';
 import { MavenArtifactIdRegex, MavenDependenciesRegex, MavenDependencyRegex, GradleDependencyCompactRegex, GradleDependencyLooseRegex, MavenGroupIdRegex, JavaLibrariesToLookFor } from 'vs/workbench/contrib/tags/common/javaWorkspaceTags';
 
@@ -38,6 +37,11 @@ const ModulesToLookFor = [
 	'hapi',
 	'socket.io',
 	'restify',
+	'next',
+	'nuxt',
+	'@nestjs/core',
+	'strapi',
+	'gatsby',
 	// JS frameworks
 	'react',
 	'react-native',
@@ -48,6 +52,7 @@ const ModulesToLookFor = [
 	'@ionic',
 	'vue',
 	'tns-core-modules',
+	'@nativescript/core',
 	'electron',
 	// Other interesting packages
 	'aws-sdk',
@@ -81,6 +86,14 @@ const ModulesToLookFor = [
 	'playwright-chromium',
 	'playwright-firefox',
 	'playwright-webkit',
+	// Other interesting browser testing packages
+	'cypress',
+	'nightwatch',
+	'protractor',
+	'puppeteer',
+	'selenium-webdriver',
+	'webdriverio',
+	'gherkin',
 	// AzureSDK packages
 	'@azure/app-configuration',
 	'@azure/cosmos-sign',
@@ -239,7 +252,6 @@ export class WorkspaceTagsService implements IWorkspaceTagsService {
 		@IFileService private readonly fileService: IFileService,
 		@IWorkspaceContextService private readonly contextService: IWorkspaceContextService,
 		@IWorkbenchEnvironmentService private readonly environmentService: IWorkbenchEnvironmentService,
-		@IProductService private readonly productService: IProductService,
 		@ITextFileService private readonly textFileService: ITextFileService
 	) { }
 
@@ -291,6 +303,7 @@ export class WorkspaceTagsService implements IWorkspaceTagsService {
 		"WorkspaceTags" : {
 			"workbench.filesToOpenOrCreate" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
 			"workbench.filesToDiff" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
+			"workbench.filesToMerge" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
 			"workspace.id" : { "classification": "SystemMetaData", "purpose": "FeatureInsight" },
 			"workspace.roots" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
 			"workspace.empty" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
@@ -311,6 +324,11 @@ export class WorkspaceTagsService implements IWorkspaceTagsService {
 			"workspace.npm.hapi" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
 			"workspace.npm.socket.io" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
 			"workspace.npm.restify" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
+			"workspace.npm.next" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
+			"workspace.npm.nuxt" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
+			"workspace.npm.@nestjs/core" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
+			"workspace.npm.strapi" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
+			"workspace.npm.gatsby" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
 			"workspace.npm.rnpm-plugin-windows" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
 			"workspace.npm.react" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
 			"workspace.npm.@angular/core" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
@@ -354,6 +372,13 @@ export class WorkspaceTagsService implements IWorkspaceTagsService {
 			"workspace.npm.playwright-chromium" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
 			"workspace.npm.playwright-firefox" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
 			"workspace.npm.playwright-webkit" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
+			"workspace.npm.cypress" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
+			"workspace.npm.nightwatch" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
+			"workspace.npm.protractor" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
+			"workspace.npm.puppeteer" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
+			"workspace.npm.selenium-webdriver" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
+			"workspace.npm.webdriverio" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
+			"workspace.npm.gherkin" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
 			"workspace.npm.@azure/app-configuration" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
 			"workspace.npm.@azure/cosmos-sign" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
 			"workspace.npm.@azure/cosmos-language-service" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
@@ -546,20 +571,21 @@ export class WorkspaceTagsService implements IWorkspaceTagsService {
 
 		tags['workspace.id'] = await this.getTelemetryWorkspaceId(workspace, state);
 
-		const { filesToOpenOrCreate, filesToDiff } = this.environmentService.configuration;
+		const { filesToOpenOrCreate, filesToDiff, filesToMerge } = this.environmentService;
 		tags['workbench.filesToOpenOrCreate'] = filesToOpenOrCreate && filesToOpenOrCreate.length || 0;
 		tags['workbench.filesToDiff'] = filesToDiff && filesToDiff.length || 0;
+		tags['workbench.filesToMerge'] = filesToMerge && filesToMerge.length || 0;
 
 		const isEmpty = state === WorkbenchState.EMPTY;
 		tags['workspace.roots'] = isEmpty ? 0 : workspace.folders.length;
 		tags['workspace.empty'] = isEmpty;
 
-		const folders = !isEmpty ? workspace.folders.map(folder => folder.uri) : this.productService.quality !== 'stable' && this.findFolders();
+		const folders = !isEmpty ? workspace.folders.map(folder => folder.uri) : undefined;
 		if (!folders || !folders.length) {
 			return Promise.resolve(tags);
 		}
 
-		return this.fileService.resolveAll(folders.map(resource => ({ resource }))).then((files: IResolveFileResult[]) => {
+		return this.fileService.resolveAll(folders.map(resource => ({ resource }))).then((files: IFileStatResult[]) => {
 			const names = (<IFileStat[]>[]).concat(...files.map(result => result.success ? (result.stat!.children || []) : [])).map(c => c.name);
 			const nameSet = names.reduce((s, n) => s.add(n.toLowerCase()), new Set());
 
@@ -579,7 +605,7 @@ export class WorkspaceTagsService implements IWorkspaceTagsService {
 			tags['workspace.bower'] = nameSet.has('bower.json') || nameSet.has('bower_components');
 
 			tags['workspace.java.pom'] = nameSet.has('pom.xml');
-			tags['workspace.java.gradle'] = nameSet.has('build.gradle') || nameSet.has('settings.gradle');
+			tags['workspace.java.gradle'] = nameSet.has('build.gradle') || nameSet.has('settings.gradle') || nameSet.has('build.gradle.kts') || nameSet.has('settings.gradle.kts') || nameSet.has('gradlew') || nameSet.has('gradlew.bat');
 
 			tags['workspace.yeoman.code.ext'] = nameSet.has('vsc-extension-quickstart.md');
 
@@ -661,7 +687,7 @@ export class WorkspaceTagsService implements IWorkspaceTagsService {
 
 			const requirementsTxtPromises = getFilePromises('requirements.txt', this.fileService, this.textFileService, content => {
 				const dependencies: string[] = splitLines(content.value);
-				for (let dependency of dependencies) {
+				for (const dependency of dependencies) {
 					// Dependencies in requirements.txt can have 3 formats: `foo==3.1, foo>=3.1, foo`
 					const format1 = dependency.split('==');
 					const format2 = dependency.split('>=');
@@ -676,7 +702,7 @@ export class WorkspaceTagsService implements IWorkspaceTagsService {
 				// We're only interested in the '[packages]' section of the Pipfile
 				dependencies = dependencies.slice(dependencies.indexOf('[packages]') + 1);
 
-				for (let dependency of dependencies) {
+				for (const dependency of dependencies) {
 					if (dependency.trim().indexOf('[') > -1) {
 						break;
 					}
@@ -693,12 +719,12 @@ export class WorkspaceTagsService implements IWorkspaceTagsService {
 			const packageJsonPromises = getFilePromises('package.json', this.fileService, this.textFileService, content => {
 				try {
 					const packageJsonContents = JSON.parse(content.value);
-					let dependencies = Object.keys(packageJsonContents['dependencies'] || {}).concat(Object.keys(packageJsonContents['devDependencies'] || {}));
+					const dependencies = Object.keys(packageJsonContents['dependencies'] || {}).concat(Object.keys(packageJsonContents['devDependencies'] || {}));
 
-					for (let dependency of dependencies) {
-						if ('react-native' === dependency) {
+					for (const dependency of dependencies) {
+						if (dependency.startsWith('react-native')) {
 							tags['workspace.reactNative'] = true;
-						} else if ('tns-core-modules' === dependency) {
+						} else if ('tns-core-modules' === dependency || '@nativescript/core' === dependency) {
 							tags['workspace.nativescript'] = true;
 						} else if (ModulesToLookFor.indexOf(dependency) > -1) {
 							tags['workspace.npm.' + dependency] = true;
@@ -755,6 +781,7 @@ export class WorkspaceTagsService implements IWorkspaceTagsService {
 					// Ignore errors when resolving android
 				});
 			});
+
 			return Promise.all([...packageJsonPromises, ...requirementsTxtPromises, ...pipfilePromises, ...pomPromises, ...gradlePromises, ...androidPromises]).then(() => tags);
 		});
 	}
@@ -780,33 +807,9 @@ export class WorkspaceTagsService implements IWorkspaceTagsService {
 		}
 	}
 
-	private findFolders(): URI[] | undefined {
-		const folder = this.findFolder();
-		return folder && [folder];
-	}
-
-	private findFolder(): URI | undefined {
-		const { filesToOpenOrCreate, filesToDiff } = this.environmentService.configuration;
-		if (filesToOpenOrCreate && filesToOpenOrCreate.length) {
-			return this.parentURI(filesToOpenOrCreate[0].fileUri);
-		} else if (filesToDiff && filesToDiff.length) {
-			return this.parentURI(filesToDiff[0].fileUri);
-		}
-		return undefined;
-	}
-
-	private parentURI(uri: URI | undefined): URI | undefined {
-		if (!uri) {
-			return undefined;
-		}
-		const path = uri.path;
-		const i = path.lastIndexOf('/');
-		return i !== -1 ? uri.with({ path: path.substr(0, i) }) : undefined;
-	}
-
 	private searchArray(arr: string[], regEx: RegExp): boolean | undefined {
 		return arr.some(v => v.search(regEx) > -1) || undefined;
 	}
 }
 
-registerSingleton(IWorkspaceTagsService, WorkspaceTagsService, true);
+registerSingleton(IWorkspaceTagsService, WorkspaceTagsService, InstantiationType.Delayed);

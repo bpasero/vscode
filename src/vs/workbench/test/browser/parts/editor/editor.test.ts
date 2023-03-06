@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import * as assert from 'assert';
-import { EditorResourceAccessor, SideBySideEditor, IEditorInputWithPreferredResource, EditorInputCapabilities, isEditorIdentifier, IResourceDiffEditorInput, IUntitledTextResourceEditorInput } from 'vs/workbench/common/editor';
+import { EditorResourceAccessor, SideBySideEditor, EditorInputWithPreferredResource, EditorInputCapabilities, isEditorIdentifier, IResourceDiffEditorInput, IUntitledTextResourceEditorInput, isResourceEditorInput, isUntitledResourceEditorInput, isResourceDiffEditorInput, isEditorInputWithOptionsAndGroup, EditorInputWithOptions, isEditorInputWithOptions, isEditorInput, EditorInputWithOptionsAndGroup, isResourceSideBySideEditorInput, IResourceSideBySideEditorInput, isTextEditorViewState, isResourceMergeEditorInput, IResourceMergeEditorInput } from 'vs/workbench/common/editor';
 import { DiffEditorInput } from 'vs/workbench/common/editor/diffEditorInput';
 import { URI } from 'vs/base/common/uri';
 import { IInstantiationService } from 'vs/platform/instantiation/common/instantiation';
@@ -19,11 +19,13 @@ import { IEditorGroupsService } from 'vs/workbench/services/editor/common/editor
 import { EditorService } from 'vs/workbench/services/editor/browser/editorService';
 import { IEditorService } from 'vs/workbench/services/editor/common/editorService';
 import { SideBySideEditorInput } from 'vs/workbench/common/editor/sideBySideEditorInput';
-import { IResourceEditorInput } from 'vs/platform/editor/common/editor';
+import { EditorResolution, IResourceEditorInput } from 'vs/platform/editor/common/editor';
+import { ICodeEditorViewState, IDiffEditorViewState } from 'vs/editor/common/editorCommon';
+import { Position } from 'vs/editor/common/core/position';
 
 suite('Workbench editor utils', () => {
 
-	class TestEditorInputWithPreferredResource extends TestEditorInput implements IEditorInputWithPreferredResource {
+	class TestEditorInputWithPreferredResource extends TestEditorInput implements EditorInputWithPreferredResource {
 
 		constructor(resource: URI, public preferredResource: URI, typeId: string) {
 			super(resource, typeId);
@@ -38,10 +40,9 @@ suite('Workbench editor utils', () => {
 	let accessor: TestServiceAccessor;
 
 	async function createServices(): Promise<TestServiceAccessor> {
-		const instantiationService = workbenchInstantiationService();
+		const instantiationService = workbenchInstantiationService(undefined, disposables);
 
 		const part = await createEditorPart(instantiationService, disposables);
-
 		instantiationService.stub(IEditorGroupsService, part);
 
 		const editorService = instantiationService.createInstance(EditorService);
@@ -51,7 +52,7 @@ suite('Workbench editor utils', () => {
 	}
 
 	setup(() => {
-		instantiationService = workbenchInstantiationService();
+		instantiationService = workbenchInstantiationService(undefined, disposables);
 		accessor = instantiationService.createInstance(TestServiceAccessor);
 
 		disposables.add(registerTestFileEditor());
@@ -64,6 +65,37 @@ suite('Workbench editor utils', () => {
 		accessor.untitledTextEditorService.dispose();
 
 		disposables.clear();
+	});
+
+	test('untyped check functions', () => {
+		assert.ok(!isResourceEditorInput(undefined));
+		assert.ok(!isResourceEditorInput({}));
+		assert.ok(!isResourceEditorInput({ original: { resource: URI.file('/') }, modified: { resource: URI.file('/') } }));
+		assert.ok(isResourceEditorInput({ resource: URI.file('/') }));
+
+		assert.ok(!isUntitledResourceEditorInput(undefined));
+		assert.ok(isUntitledResourceEditorInput({}));
+		assert.ok(isUntitledResourceEditorInput({ resource: URI.file('/').with({ scheme: Schemas.untitled }) }));
+		assert.ok(isUntitledResourceEditorInput({ resource: URI.file('/'), forceUntitled: true }));
+
+		assert.ok(!isResourceDiffEditorInput(undefined));
+		assert.ok(!isResourceDiffEditorInput({}));
+		assert.ok(!isResourceDiffEditorInput({ resource: URI.file('/') }));
+		assert.ok(isResourceDiffEditorInput({ original: { resource: URI.file('/') }, modified: { resource: URI.file('/') } }));
+		assert.ok(isResourceDiffEditorInput({ original: { resource: URI.file('/') }, modified: { resource: URI.file('/') }, primary: { resource: URI.file('/') }, secondary: { resource: URI.file('/') } }));
+		assert.ok(!isResourceDiffEditorInput({ primary: { resource: URI.file('/') }, secondary: { resource: URI.file('/') } }));
+
+		assert.ok(!isResourceSideBySideEditorInput(undefined));
+		assert.ok(!isResourceSideBySideEditorInput({}));
+		assert.ok(!isResourceSideBySideEditorInput({ resource: URI.file('/') }));
+		assert.ok(isResourceSideBySideEditorInput({ primary: { resource: URI.file('/') }, secondary: { resource: URI.file('/') } }));
+		assert.ok(!isResourceSideBySideEditorInput({ original: { resource: URI.file('/') }, modified: { resource: URI.file('/') } }));
+		assert.ok(!isResourceSideBySideEditorInput({ primary: { resource: URI.file('/') }, secondary: { resource: URI.file('/') }, original: { resource: URI.file('/') }, modified: { resource: URI.file('/') } }));
+
+		assert.ok(!isResourceMergeEditorInput(undefined));
+		assert.ok(!isResourceMergeEditorInput({}));
+		assert.ok(!isResourceMergeEditorInput({ resource: URI.file('/') }));
+		assert.ok(isResourceMergeEditorInput({ input1: { resource: URI.file('/') }, input2: { resource: URI.file('/') }, base: { resource: URI.file('/') }, result: { resource: URI.file('/') } }));
 	});
 
 	test('EditorInputCapabilities', () => {
@@ -87,8 +119,8 @@ suite('Workbench editor utils', () => {
 		testInput1.capabilities = EditorInputCapabilities.None;
 		testInput2.capabilities = EditorInputCapabilities.None;
 
-		const sideBySideInput = new SideBySideEditorInput('name', undefined, testInput1, testInput2);
-		assert.strictEqual(sideBySideInput.hasCapability(EditorInputCapabilities.None), true);
+		const sideBySideInput = instantiationService.createInstance(SideBySideEditorInput, 'name', undefined, testInput1, testInput2);
+		assert.strictEqual(sideBySideInput.hasCapability(EditorInputCapabilities.MultipleEditors), true);
 		assert.strictEqual(sideBySideInput.hasCapability(EditorInputCapabilities.Readonly), false);
 		assert.strictEqual(sideBySideInput.hasCapability(EditorInputCapabilities.Untitled), false);
 		assert.strictEqual(sideBySideInput.hasCapability(EditorInputCapabilities.RequiresTrust), false);
@@ -127,80 +159,85 @@ suite('Workbench editor utils', () => {
 
 		const untitled = instantiationService.createInstance(UntitledTextEditorInput, service.create());
 
-		assert.strictEqual(EditorResourceAccessor.getCanonicalUri(untitled)!.toString(), untitled.resource.toString());
-		assert.strictEqual(EditorResourceAccessor.getCanonicalUri(untitled, { supportSideBySide: SideBySideEditor.PRIMARY })!.toString(), untitled.resource.toString());
-		assert.strictEqual(EditorResourceAccessor.getCanonicalUri(untitled, { supportSideBySide: SideBySideEditor.SECONDARY })!.toString(), untitled.resource.toString());
-		assert.strictEqual(EditorResourceAccessor.getCanonicalUri(untitled, { supportSideBySide: SideBySideEditor.BOTH })!.toString(), untitled.resource.toString());
-		assert.strictEqual(EditorResourceAccessor.getCanonicalUri(untitled, { filterByScheme: Schemas.untitled })!.toString(), untitled.resource.toString());
-		assert.strictEqual(EditorResourceAccessor.getCanonicalUri(untitled, { filterByScheme: [Schemas.file, Schemas.untitled] })!.toString(), untitled.resource.toString());
+		assert.strictEqual(EditorResourceAccessor.getCanonicalUri(untitled)?.toString(), untitled.resource.toString());
+		assert.strictEqual(EditorResourceAccessor.getCanonicalUri(untitled, { supportSideBySide: SideBySideEditor.PRIMARY })?.toString(), untitled.resource.toString());
+		assert.strictEqual(EditorResourceAccessor.getCanonicalUri(untitled, { supportSideBySide: SideBySideEditor.ANY })?.toString(), untitled.resource.toString());
+		assert.strictEqual(EditorResourceAccessor.getCanonicalUri(untitled, { supportSideBySide: SideBySideEditor.SECONDARY })?.toString(), untitled.resource.toString());
+		assert.strictEqual(EditorResourceAccessor.getCanonicalUri(untitled, { supportSideBySide: SideBySideEditor.BOTH })?.toString(), untitled.resource.toString());
+		assert.strictEqual(EditorResourceAccessor.getCanonicalUri(untitled, { filterByScheme: Schemas.untitled })?.toString(), untitled.resource.toString());
+		assert.strictEqual(EditorResourceAccessor.getCanonicalUri(untitled, { filterByScheme: [Schemas.file, Schemas.untitled] })?.toString(), untitled.resource.toString());
 		assert.ok(!EditorResourceAccessor.getCanonicalUri(untitled, { filterByScheme: Schemas.file }));
 
-		assert.strictEqual(EditorResourceAccessor.getOriginalUri(untitled)!.toString(), untitled.resource.toString());
-		assert.strictEqual(EditorResourceAccessor.getOriginalUri(untitled, { supportSideBySide: SideBySideEditor.PRIMARY })!.toString(), untitled.resource.toString());
-		assert.strictEqual(EditorResourceAccessor.getOriginalUri(untitled, { supportSideBySide: SideBySideEditor.SECONDARY })!.toString(), untitled.resource.toString());
-		assert.strictEqual(EditorResourceAccessor.getOriginalUri(untitled, { supportSideBySide: SideBySideEditor.BOTH })!.toString(), untitled.resource.toString());
-		assert.strictEqual(EditorResourceAccessor.getOriginalUri(untitled, { filterByScheme: Schemas.untitled })!.toString(), untitled.resource.toString());
-		assert.strictEqual(EditorResourceAccessor.getOriginalUri(untitled, { filterByScheme: [Schemas.file, Schemas.untitled] })!.toString(), untitled.resource.toString());
+		assert.strictEqual(EditorResourceAccessor.getOriginalUri(untitled)?.toString(), untitled.resource.toString());
+		assert.strictEqual(EditorResourceAccessor.getOriginalUri(untitled, { supportSideBySide: SideBySideEditor.PRIMARY })?.toString(), untitled.resource.toString());
+		assert.strictEqual(EditorResourceAccessor.getOriginalUri(untitled, { supportSideBySide: SideBySideEditor.ANY })?.toString(), untitled.resource.toString());
+		assert.strictEqual(EditorResourceAccessor.getOriginalUri(untitled, { supportSideBySide: SideBySideEditor.SECONDARY })?.toString(), untitled.resource.toString());
+		assert.strictEqual(EditorResourceAccessor.getOriginalUri(untitled, { supportSideBySide: SideBySideEditor.BOTH })?.toString(), untitled.resource.toString());
+		assert.strictEqual(EditorResourceAccessor.getOriginalUri(untitled, { filterByScheme: Schemas.untitled })?.toString(), untitled.resource.toString());
+		assert.strictEqual(EditorResourceAccessor.getOriginalUri(untitled, { filterByScheme: [Schemas.file, Schemas.untitled] })?.toString(), untitled.resource.toString());
 		assert.ok(!EditorResourceAccessor.getOriginalUri(untitled, { filterByScheme: Schemas.file }));
 
 		const file = new TestEditorInput(URI.file('/some/path.txt'), 'editorResourceFileTest');
 
-		assert.strictEqual(EditorResourceAccessor.getCanonicalUri(file)!.toString(), file.resource.toString());
-		assert.strictEqual(EditorResourceAccessor.getCanonicalUri(file, { supportSideBySide: SideBySideEditor.PRIMARY })!.toString(), file.resource.toString());
-		assert.strictEqual(EditorResourceAccessor.getCanonicalUri(file, { supportSideBySide: SideBySideEditor.SECONDARY })!.toString(), file.resource.toString());
-		assert.strictEqual(EditorResourceAccessor.getCanonicalUri(file, { supportSideBySide: SideBySideEditor.BOTH })!.toString(), file.resource.toString());
-		assert.strictEqual(EditorResourceAccessor.getCanonicalUri(file, { filterByScheme: Schemas.file })!.toString(), file.resource.toString());
-		assert.strictEqual(EditorResourceAccessor.getCanonicalUri(file, { filterByScheme: [Schemas.file, Schemas.untitled] })!.toString(), file.resource.toString());
+		assert.strictEqual(EditorResourceAccessor.getCanonicalUri(file)?.toString(), file.resource.toString());
+		assert.strictEqual(EditorResourceAccessor.getCanonicalUri(file, { supportSideBySide: SideBySideEditor.PRIMARY })?.toString(), file.resource.toString());
+		assert.strictEqual(EditorResourceAccessor.getCanonicalUri(file, { supportSideBySide: SideBySideEditor.ANY })?.toString(), file.resource.toString());
+		assert.strictEqual(EditorResourceAccessor.getCanonicalUri(file, { supportSideBySide: SideBySideEditor.SECONDARY })?.toString(), file.resource.toString());
+		assert.strictEqual(EditorResourceAccessor.getCanonicalUri(file, { supportSideBySide: SideBySideEditor.BOTH })?.toString(), file.resource.toString());
+		assert.strictEqual(EditorResourceAccessor.getCanonicalUri(file, { filterByScheme: Schemas.file })?.toString(), file.resource.toString());
+		assert.strictEqual(EditorResourceAccessor.getCanonicalUri(file, { filterByScheme: [Schemas.file, Schemas.untitled] })?.toString(), file.resource.toString());
 		assert.ok(!EditorResourceAccessor.getCanonicalUri(file, { filterByScheme: Schemas.untitled }));
 
-		assert.strictEqual(EditorResourceAccessor.getOriginalUri(file)!.toString(), file.resource.toString());
-		assert.strictEqual(EditorResourceAccessor.getOriginalUri(file, { supportSideBySide: SideBySideEditor.PRIMARY })!.toString(), file.resource.toString());
-		assert.strictEqual(EditorResourceAccessor.getOriginalUri(file, { supportSideBySide: SideBySideEditor.SECONDARY })!.toString(), file.resource.toString());
-		assert.strictEqual(EditorResourceAccessor.getOriginalUri(file, { supportSideBySide: SideBySideEditor.BOTH })!.toString(), file.resource.toString());
-		assert.strictEqual(EditorResourceAccessor.getOriginalUri(file, { filterByScheme: Schemas.file })!.toString(), file.resource.toString());
-		assert.strictEqual(EditorResourceAccessor.getOriginalUri(file, { filterByScheme: [Schemas.file, Schemas.untitled] })!.toString(), file.resource.toString());
+		assert.strictEqual(EditorResourceAccessor.getOriginalUri(file)?.toString(), file.resource.toString());
+		assert.strictEqual(EditorResourceAccessor.getOriginalUri(file, { supportSideBySide: SideBySideEditor.PRIMARY })?.toString(), file.resource.toString());
+		assert.strictEqual(EditorResourceAccessor.getOriginalUri(file, { supportSideBySide: SideBySideEditor.ANY })?.toString(), file.resource.toString());
+		assert.strictEqual(EditorResourceAccessor.getOriginalUri(file, { supportSideBySide: SideBySideEditor.SECONDARY })?.toString(), file.resource.toString());
+		assert.strictEqual(EditorResourceAccessor.getOriginalUri(file, { supportSideBySide: SideBySideEditor.BOTH })?.toString(), file.resource.toString());
+		assert.strictEqual(EditorResourceAccessor.getOriginalUri(file, { filterByScheme: Schemas.file })?.toString(), file.resource.toString());
+		assert.strictEqual(EditorResourceAccessor.getOriginalUri(file, { filterByScheme: [Schemas.file, Schemas.untitled] })?.toString(), file.resource.toString());
 		assert.ok(!EditorResourceAccessor.getOriginalUri(file, { filterByScheme: Schemas.untitled }));
 
-		const diffEditorInput = instantiationService.createInstance(DiffEditorInput, 'name', 'description', untitled, file, undefined);
+		const diffInput = instantiationService.createInstance(DiffEditorInput, 'name', 'description', untitled, file, undefined);
+		const sideBySideInput = instantiationService.createInstance(SideBySideEditorInput, 'name', 'description', untitled, file);
+		for (const input of [diffInput, sideBySideInput]) {
+			assert.ok(!EditorResourceAccessor.getCanonicalUri(input));
+			assert.ok(!EditorResourceAccessor.getCanonicalUri(input, { filterByScheme: Schemas.file }));
 
-		assert.ok(!EditorResourceAccessor.getCanonicalUri(diffEditorInput));
-		assert.ok(!EditorResourceAccessor.getCanonicalUri(diffEditorInput, { filterByScheme: Schemas.file }));
+			assert.strictEqual(EditorResourceAccessor.getCanonicalUri(input, { supportSideBySide: SideBySideEditor.PRIMARY })?.toString(), file.resource.toString());
+			assert.strictEqual(EditorResourceAccessor.getCanonicalUri(input, { supportSideBySide: SideBySideEditor.PRIMARY, filterByScheme: Schemas.file })?.toString(), file.resource.toString());
+			assert.strictEqual(EditorResourceAccessor.getCanonicalUri(input, { supportSideBySide: SideBySideEditor.PRIMARY, filterByScheme: [Schemas.file, Schemas.untitled] })?.toString(), file.resource.toString());
 
-		assert.strictEqual(EditorResourceAccessor.getCanonicalUri(diffEditorInput, { supportSideBySide: SideBySideEditor.PRIMARY })!.toString(), file.resource.toString());
-		assert.strictEqual(EditorResourceAccessor.getCanonicalUri(diffEditorInput, { supportSideBySide: SideBySideEditor.PRIMARY, filterByScheme: Schemas.file })!.toString(), file.resource.toString());
-		assert.strictEqual(EditorResourceAccessor.getCanonicalUri(diffEditorInput, { supportSideBySide: SideBySideEditor.PRIMARY, filterByScheme: [Schemas.file, Schemas.untitled] })!.toString(), file.resource.toString());
+			assert.strictEqual(EditorResourceAccessor.getCanonicalUri(input, { supportSideBySide: SideBySideEditor.SECONDARY })?.toString(), untitled.resource.toString());
+			assert.strictEqual(EditorResourceAccessor.getCanonicalUri(input, { supportSideBySide: SideBySideEditor.SECONDARY, filterByScheme: Schemas.untitled })?.toString(), untitled.resource.toString());
+			assert.strictEqual(EditorResourceAccessor.getCanonicalUri(input, { supportSideBySide: SideBySideEditor.SECONDARY, filterByScheme: [Schemas.file, Schemas.untitled] })?.toString(), untitled.resource.toString());
 
-		assert.strictEqual(EditorResourceAccessor.getCanonicalUri(diffEditorInput, { supportSideBySide: SideBySideEditor.SECONDARY })!.toString(), untitled.resource.toString());
-		assert.strictEqual(EditorResourceAccessor.getCanonicalUri(diffEditorInput, { supportSideBySide: SideBySideEditor.SECONDARY, filterByScheme: Schemas.untitled })!.toString(), untitled.resource.toString());
-		assert.strictEqual(EditorResourceAccessor.getCanonicalUri(diffEditorInput, { supportSideBySide: SideBySideEditor.SECONDARY, filterByScheme: [Schemas.file, Schemas.untitled] })!.toString(), untitled.resource.toString());
+			assert.strictEqual((EditorResourceAccessor.getCanonicalUri(input, { supportSideBySide: SideBySideEditor.BOTH }) as { primary: URI; secondary: URI }).primary.toString(), file.resource.toString());
+			assert.strictEqual((EditorResourceAccessor.getCanonicalUri(input, { supportSideBySide: SideBySideEditor.BOTH, filterByScheme: Schemas.file }) as { primary: URI; secondary: URI }).primary.toString(), file.resource.toString());
+			assert.strictEqual((EditorResourceAccessor.getCanonicalUri(input, { supportSideBySide: SideBySideEditor.BOTH, filterByScheme: [Schemas.file, Schemas.untitled] }) as { primary: URI; secondary: URI }).primary.toString(), file.resource.toString());
 
-		assert.strictEqual((EditorResourceAccessor.getCanonicalUri(diffEditorInput, { supportSideBySide: SideBySideEditor.BOTH }) as { primary: URI, secondary: URI }).primary.toString(), file.resource.toString());
-		assert.strictEqual((EditorResourceAccessor.getCanonicalUri(diffEditorInput, { supportSideBySide: SideBySideEditor.BOTH, filterByScheme: Schemas.file }) as { primary: URI, secondary: URI }).primary.toString(), file.resource.toString());
-		assert.strictEqual((EditorResourceAccessor.getCanonicalUri(diffEditorInput, { supportSideBySide: SideBySideEditor.BOTH, filterByScheme: [Schemas.file, Schemas.untitled] }) as { primary: URI, secondary: URI }).primary.toString(), file.resource.toString());
+			assert.strictEqual((EditorResourceAccessor.getCanonicalUri(input, { supportSideBySide: SideBySideEditor.BOTH }) as { primary: URI; secondary: URI }).secondary.toString(), untitled.resource.toString());
+			assert.strictEqual((EditorResourceAccessor.getCanonicalUri(input, { supportSideBySide: SideBySideEditor.BOTH, filterByScheme: Schemas.untitled }) as { primary: URI; secondary: URI }).secondary.toString(), untitled.resource.toString());
+			assert.strictEqual((EditorResourceAccessor.getCanonicalUri(input, { supportSideBySide: SideBySideEditor.BOTH, filterByScheme: [Schemas.file, Schemas.untitled] }) as { primary: URI; secondary: URI }).secondary.toString(), untitled.resource.toString());
 
-		assert.strictEqual((EditorResourceAccessor.getCanonicalUri(diffEditorInput, { supportSideBySide: SideBySideEditor.BOTH }) as { primary: URI, secondary: URI }).secondary.toString(), untitled.resource.toString());
-		assert.strictEqual((EditorResourceAccessor.getCanonicalUri(diffEditorInput, { supportSideBySide: SideBySideEditor.BOTH, filterByScheme: Schemas.untitled }) as { primary: URI, secondary: URI }).secondary.toString(), untitled.resource.toString());
-		assert.strictEqual((EditorResourceAccessor.getCanonicalUri(diffEditorInput, { supportSideBySide: SideBySideEditor.BOTH, filterByScheme: [Schemas.file, Schemas.untitled] }) as { primary: URI, secondary: URI }).secondary.toString(), untitled.resource.toString());
+			assert.ok(!EditorResourceAccessor.getOriginalUri(input));
+			assert.ok(!EditorResourceAccessor.getOriginalUri(input, { filterByScheme: Schemas.file }));
 
-		assert.ok(!EditorResourceAccessor.getOriginalUri(diffEditorInput));
-		assert.ok(!EditorResourceAccessor.getOriginalUri(diffEditorInput, { filterByScheme: Schemas.file }));
+			assert.strictEqual(EditorResourceAccessor.getOriginalUri(input, { supportSideBySide: SideBySideEditor.PRIMARY })?.toString(), file.resource.toString());
+			assert.strictEqual(EditorResourceAccessor.getOriginalUri(input, { supportSideBySide: SideBySideEditor.PRIMARY, filterByScheme: Schemas.file })?.toString(), file.resource.toString());
+			assert.strictEqual(EditorResourceAccessor.getOriginalUri(input, { supportSideBySide: SideBySideEditor.PRIMARY, filterByScheme: [Schemas.file, Schemas.untitled] })?.toString(), file.resource.toString());
 
-		assert.strictEqual(EditorResourceAccessor.getOriginalUri(diffEditorInput, { supportSideBySide: SideBySideEditor.PRIMARY })!.toString(), file.resource.toString());
-		assert.strictEqual(EditorResourceAccessor.getOriginalUri(diffEditorInput, { supportSideBySide: SideBySideEditor.PRIMARY, filterByScheme: Schemas.file })!.toString(), file.resource.toString());
-		assert.strictEqual(EditorResourceAccessor.getOriginalUri(diffEditorInput, { supportSideBySide: SideBySideEditor.PRIMARY, filterByScheme: [Schemas.file, Schemas.untitled] })!.toString(), file.resource.toString());
+			assert.strictEqual(EditorResourceAccessor.getOriginalUri(input, { supportSideBySide: SideBySideEditor.SECONDARY })?.toString(), untitled.resource.toString());
+			assert.strictEqual(EditorResourceAccessor.getOriginalUri(input, { supportSideBySide: SideBySideEditor.SECONDARY, filterByScheme: Schemas.untitled })?.toString(), untitled.resource.toString());
+			assert.strictEqual(EditorResourceAccessor.getOriginalUri(input, { supportSideBySide: SideBySideEditor.SECONDARY, filterByScheme: [Schemas.file, Schemas.untitled] })?.toString(), untitled.resource.toString());
 
-		assert.strictEqual(EditorResourceAccessor.getOriginalUri(diffEditorInput, { supportSideBySide: SideBySideEditor.SECONDARY })!.toString(), untitled.resource.toString());
-		assert.strictEqual(EditorResourceAccessor.getOriginalUri(diffEditorInput, { supportSideBySide: SideBySideEditor.SECONDARY, filterByScheme: Schemas.untitled })!.toString(), untitled.resource.toString());
-		assert.strictEqual(EditorResourceAccessor.getOriginalUri(diffEditorInput, { supportSideBySide: SideBySideEditor.SECONDARY, filterByScheme: [Schemas.file, Schemas.untitled] })!.toString(), untitled.resource.toString());
+			assert.strictEqual((EditorResourceAccessor.getOriginalUri(input, { supportSideBySide: SideBySideEditor.BOTH }) as { primary: URI; secondary: URI }).primary.toString(), file.resource.toString());
+			assert.strictEqual((EditorResourceAccessor.getOriginalUri(input, { supportSideBySide: SideBySideEditor.BOTH, filterByScheme: Schemas.file }) as { primary: URI; secondary: URI }).primary.toString(), file.resource.toString());
+			assert.strictEqual((EditorResourceAccessor.getOriginalUri(input, { supportSideBySide: SideBySideEditor.BOTH, filterByScheme: [Schemas.file, Schemas.untitled] }) as { primary: URI; secondary: URI }).primary.toString(), file.resource.toString());
 
-		assert.strictEqual((EditorResourceAccessor.getOriginalUri(diffEditorInput, { supportSideBySide: SideBySideEditor.BOTH }) as { primary: URI, secondary: URI }).primary.toString(), file.resource.toString());
-		assert.strictEqual((EditorResourceAccessor.getOriginalUri(diffEditorInput, { supportSideBySide: SideBySideEditor.BOTH, filterByScheme: Schemas.file }) as { primary: URI, secondary: URI }).primary.toString(), file.resource.toString());
-		assert.strictEqual((EditorResourceAccessor.getOriginalUri(diffEditorInput, { supportSideBySide: SideBySideEditor.BOTH, filterByScheme: [Schemas.file, Schemas.untitled] }) as { primary: URI, secondary: URI }).primary.toString(), file.resource.toString());
-
-		assert.strictEqual((EditorResourceAccessor.getOriginalUri(diffEditorInput, { supportSideBySide: SideBySideEditor.BOTH }) as { primary: URI, secondary: URI }).secondary.toString(), untitled.resource.toString());
-		assert.strictEqual((EditorResourceAccessor.getOriginalUri(diffEditorInput, { supportSideBySide: SideBySideEditor.BOTH, filterByScheme: Schemas.untitled }) as { primary: URI, secondary: URI }).secondary.toString(), untitled.resource.toString());
-		assert.strictEqual((EditorResourceAccessor.getOriginalUri(diffEditorInput, { supportSideBySide: SideBySideEditor.BOTH, filterByScheme: [Schemas.file, Schemas.untitled] }) as { primary: URI, secondary: URI }).secondary.toString(), untitled.resource.toString());
-
+			assert.strictEqual((EditorResourceAccessor.getOriginalUri(input, { supportSideBySide: SideBySideEditor.BOTH }) as { primary: URI; secondary: URI }).secondary.toString(), untitled.resource.toString());
+			assert.strictEqual((EditorResourceAccessor.getOriginalUri(input, { supportSideBySide: SideBySideEditor.BOTH, filterByScheme: Schemas.untitled }) as { primary: URI; secondary: URI }).secondary.toString(), untitled.resource.toString());
+			assert.strictEqual((EditorResourceAccessor.getOriginalUri(input, { supportSideBySide: SideBySideEditor.BOTH, filterByScheme: [Schemas.file, Schemas.untitled] }) as { primary: URI; secondary: URI }).secondary.toString(), untitled.resource.toString());
+		}
 
 		const resource = URI.file('/some/path.txt');
 		const preferredResource = URI.file('/some/PATH.txt');
@@ -224,85 +261,97 @@ suite('Workbench editor utils', () => {
 			resource: untitledURI
 		};
 
-		assert.strictEqual(EditorResourceAccessor.getCanonicalUri(untitled)!.toString(), untitled.resource?.toString());
-		assert.strictEqual(EditorResourceAccessor.getCanonicalUri(untitled, { supportSideBySide: SideBySideEditor.PRIMARY })!.toString(), untitled.resource?.toString());
-		assert.strictEqual(EditorResourceAccessor.getCanonicalUri(untitled, { supportSideBySide: SideBySideEditor.SECONDARY })!.toString(), untitled.resource?.toString());
-		assert.strictEqual(EditorResourceAccessor.getCanonicalUri(untitled, { supportSideBySide: SideBySideEditor.BOTH })!.toString(), untitled.resource?.toString());
-		assert.strictEqual(EditorResourceAccessor.getCanonicalUri(untitled, { filterByScheme: Schemas.untitled })!.toString(), untitled.resource?.toString());
-		assert.strictEqual(EditorResourceAccessor.getCanonicalUri(untitled, { filterByScheme: [Schemas.file, Schemas.untitled] })!.toString(), untitled.resource?.toString());
+		assert.strictEqual(EditorResourceAccessor.getCanonicalUri(untitled)?.toString(), untitled.resource?.toString());
+		assert.strictEqual(EditorResourceAccessor.getCanonicalUri(untitled, { supportSideBySide: SideBySideEditor.PRIMARY })?.toString(), untitled.resource?.toString());
+		assert.strictEqual(EditorResourceAccessor.getCanonicalUri(untitled, { supportSideBySide: SideBySideEditor.ANY })?.toString(), untitled.resource?.toString());
+		assert.strictEqual(EditorResourceAccessor.getCanonicalUri(untitled, { supportSideBySide: SideBySideEditor.SECONDARY })?.toString(), untitled.resource?.toString());
+		assert.strictEqual(EditorResourceAccessor.getCanonicalUri(untitled, { supportSideBySide: SideBySideEditor.BOTH })?.toString(), untitled.resource?.toString());
+		assert.strictEqual(EditorResourceAccessor.getCanonicalUri(untitled, { filterByScheme: Schemas.untitled })?.toString(), untitled.resource?.toString());
+		assert.strictEqual(EditorResourceAccessor.getCanonicalUri(untitled, { filterByScheme: [Schemas.file, Schemas.untitled] })?.toString(), untitled.resource?.toString());
 		assert.ok(!EditorResourceAccessor.getCanonicalUri(untitled, { filterByScheme: Schemas.file }));
 
-		assert.strictEqual(EditorResourceAccessor.getOriginalUri(untitled)!.toString(), untitled.resource?.toString());
-		assert.strictEqual(EditorResourceAccessor.getOriginalUri(untitled, { supportSideBySide: SideBySideEditor.PRIMARY })!.toString(), untitled.resource?.toString());
-		assert.strictEqual(EditorResourceAccessor.getOriginalUri(untitled, { supportSideBySide: SideBySideEditor.SECONDARY })!.toString(), untitled.resource?.toString());
-		assert.strictEqual(EditorResourceAccessor.getOriginalUri(untitled, { supportSideBySide: SideBySideEditor.BOTH })!.toString(), untitled.resource?.toString());
-		assert.strictEqual(EditorResourceAccessor.getOriginalUri(untitled, { filterByScheme: Schemas.untitled })!.toString(), untitled.resource?.toString());
-		assert.strictEqual(EditorResourceAccessor.getOriginalUri(untitled, { filterByScheme: [Schemas.file, Schemas.untitled] })!.toString(), untitled.resource?.toString());
+		assert.strictEqual(EditorResourceAccessor.getOriginalUri(untitled)?.toString(), untitled.resource?.toString());
+		assert.strictEqual(EditorResourceAccessor.getOriginalUri(untitled, { supportSideBySide: SideBySideEditor.PRIMARY })?.toString(), untitled.resource?.toString());
+		assert.strictEqual(EditorResourceAccessor.getOriginalUri(untitled, { supportSideBySide: SideBySideEditor.ANY })?.toString(), untitled.resource?.toString());
+		assert.strictEqual(EditorResourceAccessor.getOriginalUri(untitled, { supportSideBySide: SideBySideEditor.SECONDARY })?.toString(), untitled.resource?.toString());
+		assert.strictEqual(EditorResourceAccessor.getOriginalUri(untitled, { supportSideBySide: SideBySideEditor.BOTH })?.toString(), untitled.resource?.toString());
+		assert.strictEqual(EditorResourceAccessor.getOriginalUri(untitled, { filterByScheme: Schemas.untitled })?.toString(), untitled.resource?.toString());
+		assert.strictEqual(EditorResourceAccessor.getOriginalUri(untitled, { filterByScheme: [Schemas.file, Schemas.untitled] })?.toString(), untitled.resource?.toString());
 		assert.ok(!EditorResourceAccessor.getOriginalUri(untitled, { filterByScheme: Schemas.file }));
 
 		const file: IResourceEditorInput = {
 			resource: URI.file('/some/path.txt')
 		};
 
-		assert.strictEqual(EditorResourceAccessor.getCanonicalUri(file)!.toString(), file.resource.toString());
-		assert.strictEqual(EditorResourceAccessor.getCanonicalUri(file, { supportSideBySide: SideBySideEditor.PRIMARY })!.toString(), file.resource.toString());
-		assert.strictEqual(EditorResourceAccessor.getCanonicalUri(file, { supportSideBySide: SideBySideEditor.SECONDARY })!.toString(), file.resource.toString());
-		assert.strictEqual(EditorResourceAccessor.getCanonicalUri(file, { supportSideBySide: SideBySideEditor.BOTH })!.toString(), file.resource.toString());
-		assert.strictEqual(EditorResourceAccessor.getCanonicalUri(file, { filterByScheme: Schemas.file })!.toString(), file.resource.toString());
-		assert.strictEqual(EditorResourceAccessor.getCanonicalUri(file, { filterByScheme: [Schemas.file, Schemas.untitled] })!.toString(), file.resource.toString());
+		assert.strictEqual(EditorResourceAccessor.getCanonicalUri(file)?.toString(), file.resource.toString());
+		assert.strictEqual(EditorResourceAccessor.getCanonicalUri(file, { supportSideBySide: SideBySideEditor.PRIMARY })?.toString(), file.resource.toString());
+		assert.strictEqual(EditorResourceAccessor.getCanonicalUri(file, { supportSideBySide: SideBySideEditor.ANY })?.toString(), file.resource.toString());
+		assert.strictEqual(EditorResourceAccessor.getCanonicalUri(file, { supportSideBySide: SideBySideEditor.SECONDARY })?.toString(), file.resource.toString());
+		assert.strictEqual(EditorResourceAccessor.getCanonicalUri(file, { supportSideBySide: SideBySideEditor.BOTH })?.toString(), file.resource.toString());
+		assert.strictEqual(EditorResourceAccessor.getCanonicalUri(file, { filterByScheme: Schemas.file })?.toString(), file.resource.toString());
+		assert.strictEqual(EditorResourceAccessor.getCanonicalUri(file, { filterByScheme: [Schemas.file, Schemas.untitled] })?.toString(), file.resource.toString());
 		assert.ok(!EditorResourceAccessor.getCanonicalUri(file, { filterByScheme: Schemas.untitled }));
 
-		assert.strictEqual(EditorResourceAccessor.getOriginalUri(file)!.toString(), file.resource.toString());
-		assert.strictEqual(EditorResourceAccessor.getOriginalUri(file, { supportSideBySide: SideBySideEditor.PRIMARY })!.toString(), file.resource.toString());
-		assert.strictEqual(EditorResourceAccessor.getOriginalUri(file, { supportSideBySide: SideBySideEditor.SECONDARY })!.toString(), file.resource.toString());
-		assert.strictEqual(EditorResourceAccessor.getOriginalUri(file, { supportSideBySide: SideBySideEditor.BOTH })!.toString(), file.resource.toString());
-		assert.strictEqual(EditorResourceAccessor.getOriginalUri(file, { filterByScheme: Schemas.file })!.toString(), file.resource.toString());
-		assert.strictEqual(EditorResourceAccessor.getOriginalUri(file, { filterByScheme: [Schemas.file, Schemas.untitled] })!.toString(), file.resource.toString());
+		assert.strictEqual(EditorResourceAccessor.getOriginalUri(file)?.toString(), file.resource.toString());
+		assert.strictEqual(EditorResourceAccessor.getOriginalUri(file, { supportSideBySide: SideBySideEditor.PRIMARY })?.toString(), file.resource.toString());
+		assert.strictEqual(EditorResourceAccessor.getOriginalUri(file, { supportSideBySide: SideBySideEditor.ANY })?.toString(), file.resource.toString());
+		assert.strictEqual(EditorResourceAccessor.getOriginalUri(file, { supportSideBySide: SideBySideEditor.SECONDARY })?.toString(), file.resource.toString());
+		assert.strictEqual(EditorResourceAccessor.getOriginalUri(file, { supportSideBySide: SideBySideEditor.BOTH })?.toString(), file.resource.toString());
+		assert.strictEqual(EditorResourceAccessor.getOriginalUri(file, { filterByScheme: Schemas.file })?.toString(), file.resource.toString());
+		assert.strictEqual(EditorResourceAccessor.getOriginalUri(file, { filterByScheme: [Schemas.file, Schemas.untitled] })?.toString(), file.resource.toString());
 		assert.ok(!EditorResourceAccessor.getOriginalUri(file, { filterByScheme: Schemas.untitled }));
 
-		const diffEditorInput: IResourceDiffEditorInput = {
-			originalInput: untitled,
-			modifiedInput: file
+		const diffInput: IResourceDiffEditorInput = { original: untitled, modified: file };
+		const sideBySideInput: IResourceSideBySideEditorInput = { primary: file, secondary: untitled };
+		for (const untypedInput of [diffInput, sideBySideInput]) {
+			assert.ok(!EditorResourceAccessor.getCanonicalUri(untypedInput));
+			assert.ok(!EditorResourceAccessor.getCanonicalUri(untypedInput, { filterByScheme: Schemas.file }));
+
+			assert.strictEqual(EditorResourceAccessor.getCanonicalUri(untypedInput, { supportSideBySide: SideBySideEditor.PRIMARY })?.toString(), file.resource.toString());
+			assert.strictEqual(EditorResourceAccessor.getCanonicalUri(untypedInput, { supportSideBySide: SideBySideEditor.PRIMARY, filterByScheme: Schemas.file })?.toString(), file.resource.toString());
+			assert.strictEqual(EditorResourceAccessor.getCanonicalUri(untypedInput, { supportSideBySide: SideBySideEditor.PRIMARY, filterByScheme: [Schemas.file, Schemas.untitled] })?.toString(), file.resource.toString());
+
+			assert.strictEqual(EditorResourceAccessor.getCanonicalUri(untypedInput, { supportSideBySide: SideBySideEditor.SECONDARY })?.toString(), untitled.resource?.toString());
+			assert.strictEqual(EditorResourceAccessor.getCanonicalUri(untypedInput, { supportSideBySide: SideBySideEditor.SECONDARY, filterByScheme: Schemas.untitled })?.toString(), untitled.resource?.toString());
+			assert.strictEqual(EditorResourceAccessor.getCanonicalUri(untypedInput, { supportSideBySide: SideBySideEditor.SECONDARY, filterByScheme: [Schemas.file, Schemas.untitled] })?.toString(), untitled.resource?.toString());
+
+			assert.strictEqual((EditorResourceAccessor.getCanonicalUri(untypedInput, { supportSideBySide: SideBySideEditor.BOTH }) as { primary: URI; secondary: URI }).primary.toString(), file.resource.toString());
+			assert.strictEqual((EditorResourceAccessor.getCanonicalUri(untypedInput, { supportSideBySide: SideBySideEditor.BOTH, filterByScheme: Schemas.file }) as { primary: URI; secondary: URI }).primary.toString(), file.resource.toString());
+			assert.strictEqual((EditorResourceAccessor.getCanonicalUri(untypedInput, { supportSideBySide: SideBySideEditor.BOTH, filterByScheme: [Schemas.file, Schemas.untitled] }) as { primary: URI; secondary: URI }).primary.toString(), file.resource.toString());
+
+			assert.strictEqual((EditorResourceAccessor.getCanonicalUri(untypedInput, { supportSideBySide: SideBySideEditor.BOTH }) as { primary: URI; secondary: URI }).secondary.toString(), untitled.resource?.toString());
+			assert.strictEqual((EditorResourceAccessor.getCanonicalUri(untypedInput, { supportSideBySide: SideBySideEditor.BOTH, filterByScheme: Schemas.untitled }) as { primary: URI; secondary: URI }).secondary.toString(), untitled.resource?.toString());
+			assert.strictEqual((EditorResourceAccessor.getCanonicalUri(untypedInput, { supportSideBySide: SideBySideEditor.BOTH, filterByScheme: [Schemas.file, Schemas.untitled] }) as { primary: URI; secondary: URI }).secondary.toString(), untitled.resource?.toString());
+
+			assert.ok(!EditorResourceAccessor.getOriginalUri(untypedInput));
+			assert.ok(!EditorResourceAccessor.getOriginalUri(untypedInput, { filterByScheme: Schemas.file }));
+
+			assert.strictEqual(EditorResourceAccessor.getOriginalUri(untypedInput, { supportSideBySide: SideBySideEditor.PRIMARY })?.toString(), file.resource.toString());
+			assert.strictEqual(EditorResourceAccessor.getOriginalUri(untypedInput, { supportSideBySide: SideBySideEditor.PRIMARY, filterByScheme: Schemas.file })?.toString(), file.resource.toString());
+			assert.strictEqual(EditorResourceAccessor.getOriginalUri(untypedInput, { supportSideBySide: SideBySideEditor.PRIMARY, filterByScheme: [Schemas.file, Schemas.untitled] })?.toString(), file.resource.toString());
+
+			assert.strictEqual(EditorResourceAccessor.getOriginalUri(untypedInput, { supportSideBySide: SideBySideEditor.SECONDARY })?.toString(), untitled.resource?.toString());
+			assert.strictEqual(EditorResourceAccessor.getOriginalUri(untypedInput, { supportSideBySide: SideBySideEditor.SECONDARY, filterByScheme: Schemas.untitled })?.toString(), untitled.resource?.toString());
+			assert.strictEqual(EditorResourceAccessor.getOriginalUri(untypedInput, { supportSideBySide: SideBySideEditor.SECONDARY, filterByScheme: [Schemas.file, Schemas.untitled] })?.toString(), untitled.resource?.toString());
+
+			assert.strictEqual((EditorResourceAccessor.getOriginalUri(untypedInput, { supportSideBySide: SideBySideEditor.BOTH }) as { primary: URI; secondary: URI }).primary.toString(), file.resource.toString());
+			assert.strictEqual((EditorResourceAccessor.getOriginalUri(untypedInput, { supportSideBySide: SideBySideEditor.BOTH, filterByScheme: Schemas.file }) as { primary: URI; secondary: URI }).primary.toString(), file.resource.toString());
+			assert.strictEqual((EditorResourceAccessor.getOriginalUri(untypedInput, { supportSideBySide: SideBySideEditor.BOTH, filterByScheme: [Schemas.file, Schemas.untitled] }) as { primary: URI; secondary: URI }).primary.toString(), file.resource.toString());
+
+			assert.strictEqual((EditorResourceAccessor.getOriginalUri(untypedInput, { supportSideBySide: SideBySideEditor.BOTH }) as { primary: URI; secondary: URI }).secondary.toString(), untitled.resource?.toString());
+			assert.strictEqual((EditorResourceAccessor.getOriginalUri(untypedInput, { supportSideBySide: SideBySideEditor.BOTH, filterByScheme: Schemas.untitled }) as { primary: URI; secondary: URI }).secondary.toString(), untitled.resource?.toString());
+			assert.strictEqual((EditorResourceAccessor.getOriginalUri(untypedInput, { supportSideBySide: SideBySideEditor.BOTH, filterByScheme: [Schemas.file, Schemas.untitled] }) as { primary: URI; secondary: URI }).secondary.toString(), untitled.resource?.toString());
+		}
+
+		const fileMerge: IResourceMergeEditorInput = {
+			input1: { resource: URI.file('/some/remote.txt') },
+			input2: { resource: URI.file('/some/local.txt') },
+			base: { resource: URI.file('/some/base.txt') },
+			result: { resource: URI.file('/some/merged.txt') }
 		};
 
-		assert.ok(!EditorResourceAccessor.getCanonicalUri(diffEditorInput));
-		assert.ok(!EditorResourceAccessor.getCanonicalUri(diffEditorInput, { filterByScheme: Schemas.file }));
-
-		assert.strictEqual(EditorResourceAccessor.getCanonicalUri(diffEditorInput, { supportSideBySide: SideBySideEditor.PRIMARY })!.toString(), file.resource.toString());
-		assert.strictEqual(EditorResourceAccessor.getCanonicalUri(diffEditorInput, { supportSideBySide: SideBySideEditor.PRIMARY, filterByScheme: Schemas.file })!.toString(), file.resource.toString());
-		assert.strictEqual(EditorResourceAccessor.getCanonicalUri(diffEditorInput, { supportSideBySide: SideBySideEditor.PRIMARY, filterByScheme: [Schemas.file, Schemas.untitled] })!.toString(), file.resource.toString());
-
-		assert.strictEqual(EditorResourceAccessor.getCanonicalUri(diffEditorInput, { supportSideBySide: SideBySideEditor.SECONDARY })!.toString(), untitled.resource?.toString());
-		assert.strictEqual(EditorResourceAccessor.getCanonicalUri(diffEditorInput, { supportSideBySide: SideBySideEditor.SECONDARY, filterByScheme: Schemas.untitled })!.toString(), untitled.resource?.toString());
-		assert.strictEqual(EditorResourceAccessor.getCanonicalUri(diffEditorInput, { supportSideBySide: SideBySideEditor.SECONDARY, filterByScheme: [Schemas.file, Schemas.untitled] })!.toString(), untitled.resource?.toString());
-
-		assert.strictEqual((EditorResourceAccessor.getCanonicalUri(diffEditorInput, { supportSideBySide: SideBySideEditor.BOTH }) as { primary: URI, secondary: URI }).primary.toString(), file.resource.toString());
-		assert.strictEqual((EditorResourceAccessor.getCanonicalUri(diffEditorInput, { supportSideBySide: SideBySideEditor.BOTH, filterByScheme: Schemas.file }) as { primary: URI, secondary: URI }).primary.toString(), file.resource.toString());
-		assert.strictEqual((EditorResourceAccessor.getCanonicalUri(diffEditorInput, { supportSideBySide: SideBySideEditor.BOTH, filterByScheme: [Schemas.file, Schemas.untitled] }) as { primary: URI, secondary: URI }).primary.toString(), file.resource.toString());
-
-		assert.strictEqual((EditorResourceAccessor.getCanonicalUri(diffEditorInput, { supportSideBySide: SideBySideEditor.BOTH }) as { primary: URI, secondary: URI }).secondary.toString(), untitled.resource?.toString());
-		assert.strictEqual((EditorResourceAccessor.getCanonicalUri(diffEditorInput, { supportSideBySide: SideBySideEditor.BOTH, filterByScheme: Schemas.untitled }) as { primary: URI, secondary: URI }).secondary.toString(), untitled.resource?.toString());
-		assert.strictEqual((EditorResourceAccessor.getCanonicalUri(diffEditorInput, { supportSideBySide: SideBySideEditor.BOTH, filterByScheme: [Schemas.file, Schemas.untitled] }) as { primary: URI, secondary: URI }).secondary.toString(), untitled.resource?.toString());
-
-		assert.ok(!EditorResourceAccessor.getOriginalUri(diffEditorInput));
-		assert.ok(!EditorResourceAccessor.getOriginalUri(diffEditorInput, { filterByScheme: Schemas.file }));
-
-		assert.strictEqual(EditorResourceAccessor.getOriginalUri(diffEditorInput, { supportSideBySide: SideBySideEditor.PRIMARY })!.toString(), file.resource.toString());
-		assert.strictEqual(EditorResourceAccessor.getOriginalUri(diffEditorInput, { supportSideBySide: SideBySideEditor.PRIMARY, filterByScheme: Schemas.file })!.toString(), file.resource.toString());
-		assert.strictEqual(EditorResourceAccessor.getOriginalUri(diffEditorInput, { supportSideBySide: SideBySideEditor.PRIMARY, filterByScheme: [Schemas.file, Schemas.untitled] })!.toString(), file.resource.toString());
-
-		assert.strictEqual(EditorResourceAccessor.getOriginalUri(diffEditorInput, { supportSideBySide: SideBySideEditor.SECONDARY })!.toString(), untitled.resource?.toString());
-		assert.strictEqual(EditorResourceAccessor.getOriginalUri(diffEditorInput, { supportSideBySide: SideBySideEditor.SECONDARY, filterByScheme: Schemas.untitled })!.toString(), untitled.resource?.toString());
-		assert.strictEqual(EditorResourceAccessor.getOriginalUri(diffEditorInput, { supportSideBySide: SideBySideEditor.SECONDARY, filterByScheme: [Schemas.file, Schemas.untitled] })!.toString(), untitled.resource?.toString());
-
-		assert.strictEqual((EditorResourceAccessor.getOriginalUri(diffEditorInput, { supportSideBySide: SideBySideEditor.BOTH }) as { primary: URI, secondary: URI }).primary.toString(), file.resource.toString());
-		assert.strictEqual((EditorResourceAccessor.getOriginalUri(diffEditorInput, { supportSideBySide: SideBySideEditor.BOTH, filterByScheme: Schemas.file }) as { primary: URI, secondary: URI }).primary.toString(), file.resource.toString());
-		assert.strictEqual((EditorResourceAccessor.getOriginalUri(diffEditorInput, { supportSideBySide: SideBySideEditor.BOTH, filterByScheme: [Schemas.file, Schemas.untitled] }) as { primary: URI, secondary: URI }).primary.toString(), file.resource.toString());
-
-		assert.strictEqual((EditorResourceAccessor.getOriginalUri(diffEditorInput, { supportSideBySide: SideBySideEditor.BOTH }) as { primary: URI, secondary: URI }).secondary.toString(), untitled.resource?.toString());
-		assert.strictEqual((EditorResourceAccessor.getOriginalUri(diffEditorInput, { supportSideBySide: SideBySideEditor.BOTH, filterByScheme: Schemas.untitled }) as { primary: URI, secondary: URI }).secondary.toString(), untitled.resource?.toString());
-		assert.strictEqual((EditorResourceAccessor.getOriginalUri(diffEditorInput, { supportSideBySide: SideBySideEditor.BOTH, filterByScheme: [Schemas.file, Schemas.untitled] }) as { primary: URI, secondary: URI }).secondary.toString(), untitled.resource?.toString());
-
+		assert.strictEqual(EditorResourceAccessor.getCanonicalUri(fileMerge)?.toString(), fileMerge.result.resource.toString());
+		assert.strictEqual(EditorResourceAccessor.getOriginalUri(fileMerge)?.toString(), fileMerge.result.resource.toString());
 	});
 
 	test('isEditorIdentifier', () => {
@@ -312,6 +361,48 @@ suite('Workbench editor utils', () => {
 		const testInput1 = new TestFileEditorInput(URI.file('resource1'), 'testTypeId');
 		assert.strictEqual(isEditorIdentifier(testInput1), false);
 		assert.strictEqual(isEditorIdentifier({ editor: testInput1, groupId: 3 }), true);
+	});
+
+	test('isEditorInputWithOptionsAndGroup', () => {
+		const editorInput = new TestFileEditorInput(URI.file('resource1'), 'testTypeId');
+		assert.strictEqual(isEditorInput(editorInput), true);
+		assert.strictEqual(isEditorInputWithOptions(editorInput), false);
+		assert.strictEqual(isEditorInputWithOptionsAndGroup(editorInput), false);
+
+		const editorInputWithOptions: EditorInputWithOptions = { editor: editorInput, options: { override: EditorResolution.PICK } };
+		assert.strictEqual(isEditorInput(editorInputWithOptions), false);
+		assert.strictEqual(isEditorInputWithOptions(editorInputWithOptions), true);
+		assert.strictEqual(isEditorInputWithOptionsAndGroup(editorInputWithOptions), false);
+
+		const service = accessor.editorGroupService;
+		const editorInputWithOptionsAndGroup: EditorInputWithOptionsAndGroup = { editor: editorInput, options: { override: EditorResolution.PICK }, group: service.activeGroup };
+		assert.strictEqual(isEditorInput(editorInputWithOptionsAndGroup), false);
+		assert.strictEqual(isEditorInputWithOptions(editorInputWithOptionsAndGroup), true);
+		assert.strictEqual(isEditorInputWithOptionsAndGroup(editorInputWithOptionsAndGroup), true);
+	});
+
+	test('isTextEditorViewState', () => {
+		assert.strictEqual(isTextEditorViewState(undefined), false);
+		assert.strictEqual(isTextEditorViewState({}), false);
+
+		const codeEditorViewState: ICodeEditorViewState = {
+			contributionsState: {},
+			cursorState: [],
+			viewState: {
+				scrollLeft: 0,
+				firstPosition: new Position(1, 1),
+				firstPositionDeltaTop: 1
+			}
+		};
+
+		assert.strictEqual(isTextEditorViewState(codeEditorViewState), true);
+
+		const diffEditorViewState: IDiffEditorViewState = {
+			original: codeEditorViewState,
+			modified: codeEditorViewState
+		};
+
+		assert.strictEqual(isTextEditorViewState(diffEditorViewState), true);
 	});
 
 	test('whenEditorClosed (single editor)', async function () {
@@ -345,7 +436,7 @@ suite('Workbench editor utils', () => {
 			if (custom) {
 				await accessor.editorService.openEditor(new TestFileEditorInput(resource, 'testTypeId'), { pinned: true });
 			} else if (sideBySide) {
-				await accessor.editorService.openEditor(new SideBySideEditorInput('testSideBySideEditor', undefined, new TestFileEditorInput(resource, 'testTypeId'), new TestFileEditorInput(resource, 'testTypeId')), { pinned: true });
+				await accessor.editorService.openEditor(instantiationService.createInstance(SideBySideEditorInput, 'testSideBySideEditor', undefined, new TestFileEditorInput(resource, 'testTypeId'), new TestFileEditorInput(resource, 'testTypeId')), { pinned: true });
 			} else {
 				await accessor.editorService.openEditor({ resource, options: { pinned: true } });
 			}

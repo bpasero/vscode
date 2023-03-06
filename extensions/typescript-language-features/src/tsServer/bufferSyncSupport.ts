@@ -5,13 +5,14 @@
 
 import * as vscode from 'vscode';
 import type * as Proto from '../protocol';
-import { ITypeScriptServiceClient, ClientCapability } from '../typescriptService';
+import { ClientCapability, ITypeScriptServiceClient } from '../typescriptService';
 import API from '../utils/api';
 import { coalesce } from '../utils/arrays';
-import { Delayer } from '../utils/async';
+import { Delayer, setImmediate } from '../utils/async';
 import { nulToken } from '../utils/cancellation';
 import { Disposable } from '../utils/dispose';
-import * as languageModeIds from '../utils/languageModeIds';
+import { vscodeNotebookCell } from '../utils/fileSchemes';
+import * as languageModeIds from '../utils/languageIds';
 import { ResourceMap } from '../utils/resourceMap';
 import * as typeConverters from '../utils/typeConverters';
 
@@ -73,10 +74,10 @@ class BufferSynchronizer {
 	constructor(
 		private readonly client: ITypeScriptServiceClient,
 		pathNormalizer: (path: vscode.Uri) => string | undefined,
-		onCaseInsenitiveFileSystem: boolean
+		onCaseInsensitiveFileSystem: boolean
 	) {
 		this._pending = new ResourceMap<BufferOperation>(pathNormalizer, {
-			onCaseInsenitiveFileSystem
+			onCaseInsensitiveFileSystem
 		});
 	}
 
@@ -167,7 +168,7 @@ class BufferSynchronizer {
 
 	private updatePending(resource: vscode.Uri, op: BufferOperation): boolean {
 		switch (op.type) {
-			case BufferOperationType.Close:
+			case BufferOperationType.Close: {
 				const existing = this._pending.get(resource);
 				switch (existing?.type) {
 					case BufferOperationType.Open:
@@ -175,6 +176,7 @@ class BufferSynchronizer {
 						return false; // Open then close. No need to do anything
 				}
 				break;
+			}
 		}
 
 		if (this._pending.has(resource)) {
@@ -209,13 +211,11 @@ class SyncedBuffer {
 			args.scriptKindName = scriptKind;
 		}
 
-		if (this.client.apiVersion.gte(API.v240)) {
-			const tsPluginsForDocument = this.client.pluginManager.plugins
-				.filter(x => x.languages.indexOf(this.document.languageId) >= 0);
+		const tsPluginsForDocument = this.client.pluginManager.plugins
+			.filter(x => x.languages.indexOf(this.document.languageId) >= 0);
 
-			if (tsPluginsForDocument.length) {
-				(args as any).plugins = tsPluginsForDocument.map(plugin => plugin.name);
-			}
+		if (tsPluginsForDocument.length) {
+			(args as any).plugins = tsPluginsForDocument.map(plugin => plugin.name);
 		}
 
 		this.synchronizer.open(this.resource, args);
@@ -303,19 +303,26 @@ class GetErrRequest {
 	private readonly _token: vscode.CancellationTokenSource = new vscode.CancellationTokenSource();
 
 	private constructor(
-		client: ITypeScriptServiceClient,
+		private readonly client: ITypeScriptServiceClient,
 		public readonly files: ResourceMap<void>,
 		onDone: () => void
 	) {
-		const allFiles = coalesce(Array.from(files.entries)
-			.filter(entry => client.hasCapabilityForResource(entry.resource, ClientCapability.Semantic))
-			.map(entry => client.normalizedPath(entry.resource)));
+		if (!this.isErrorReportingEnabled()) {
+			this._done = true;
+			setImmediate(onDone);
+			return;
+		}
 
-		if (!allFiles.length || !client.capabilities.has(ClientCapability.Semantic)) {
+		const supportsSyntaxGetErr = this.client.apiVersion.gte(API.v440);
+		const allFiles = coalesce(Array.from(files.entries)
+			.filter(entry => supportsSyntaxGetErr || client.hasCapabilityForResource(entry.resource, ClientCapability.Semantic))
+			.map(entry => client.toTsFilePath(entry.resource)));
+
+		if (!allFiles.length) {
 			this._done = true;
 			setImmediate(onDone);
 		} else {
-			const request = client.configuration.enableProjectDiagnostics
+			const request = this.areProjectDiagnosticsEnabled()
 				// Note that geterrForProject is almost certainly not the api we want here as it ends up computing far
 				// too many diagnostics
 				? client.executeAsync('geterrForProject', { delay: 0, file: allFiles[0] }, this._token.token)
@@ -331,6 +338,19 @@ class GetErrRequest {
 		}
 	}
 
+	private isErrorReportingEnabled() {
+		if (this.client.apiVersion.gte(API.v440)) {
+			return true;
+		} else {
+			// Older TS versions only support `getErr` on semantic server
+			return this.client.capabilities.has(ClientCapability.Semantic);
+		}
+	}
+
+	private areProjectDiagnosticsEnabled() {
+		return this.client.configuration.enableProjectDiagnostics && this.client.capabilities.has(ClientCapability.Semantic);
+	}
+
 	public cancel(): any {
 		if (!this._done) {
 			this._token.cancel();
@@ -339,6 +359,98 @@ class GetErrRequest {
 		this._token.dispose();
 	}
 }
+
+class TabResourceTracker extends Disposable {
+
+	private readonly _onDidChange = this._register(new vscode.EventEmitter<{
+		readonly closed: Iterable<vscode.Uri>;
+		readonly opened: Iterable<vscode.Uri>;
+	}>());
+	public readonly onDidChange = this._onDidChange.event;
+
+	private readonly _tabResources: ResourceMap<{ readonly tabs: Set<vscode.Tab> }>;
+
+	constructor(
+		normalizePath: (resource: vscode.Uri) => string | undefined,
+		config: {
+			readonly onCaseInsensitiveFileSystem: boolean;
+		},
+	) {
+		super();
+
+		this._tabResources = new ResourceMap<{ readonly tabs: Set<vscode.Tab> }>(normalizePath, config);
+
+		for (const tabGroup of vscode.window.tabGroups.all) {
+			for (const tab of tabGroup.tabs) {
+				this.add(tab);
+			}
+		}
+
+		this._register(vscode.window.tabGroups.onDidChangeTabs(e => {
+			const closed = e.closed.flatMap(tab => this.delete(tab));
+			const opened = e.opened.flatMap(tab => this.add(tab));
+			if (closed.length || opened.length) {
+				this._onDidChange.fire({ closed, opened });
+			}
+		}));
+	}
+
+	public has(resource: vscode.Uri): boolean {
+		if (resource.scheme === vscodeNotebookCell) {
+			const notebook = vscode.workspace.notebookDocuments.find(doc =>
+				doc.getCells().some(cell => cell.document.uri.toString() === resource.toString()));
+
+			return !!notebook && this.has(notebook.uri);
+		}
+
+		const entry = this._tabResources.get(resource);
+		return !!entry && entry.tabs.size > 0;
+	}
+
+	private add(tab: vscode.Tab): vscode.Uri[] {
+		const addedResources: vscode.Uri[] = [];
+		for (const uri of this.getResourcesForTab(tab)) {
+			const entry = this._tabResources.get(uri);
+			if (entry) {
+				entry.tabs.add(tab);
+			} else {
+				this._tabResources.set(uri, { tabs: new Set([tab]) });
+				addedResources.push(uri);
+			}
+		}
+		return addedResources;
+	}
+
+	private delete(tab: vscode.Tab): vscode.Uri[] {
+		const closedResources: vscode.Uri[] = [];
+		for (const uri of this.getResourcesForTab(tab)) {
+			const entry = this._tabResources.get(uri);
+			if (!entry) {
+				continue;
+			}
+
+			entry.tabs.delete(tab);
+			if (entry.tabs.size === 0) {
+				this._tabResources.delete(uri);
+				closedResources.push(uri);
+			}
+		}
+		return closedResources;
+	}
+
+	private getResourcesForTab(tab: vscode.Tab): vscode.Uri[] {
+		if (tab.input instanceof vscode.TabInputText) {
+			return [tab.input.uri];
+		} else if (tab.input instanceof vscode.TabInputTextDiff) {
+			return [tab.input.original, tab.input.modified];
+		} else if (tab.input instanceof vscode.TabInputNotebook) {
+			return [tab.input.uri];
+		} else {
+			return [];
+		}
+	}
+}
+
 
 export default class BufferSyncSupport extends Disposable {
 
@@ -354,10 +466,12 @@ export default class BufferSyncSupport extends Disposable {
 	private listening: boolean = false;
 	private readonly synchronizer: BufferSynchronizer;
 
+	private readonly _tabResources: TabResourceTracker;
+
 	constructor(
 		client: ITypeScriptServiceClient,
 		modeIds: readonly string[],
-		onCaseInsenitiveFileSystem: boolean
+		onCaseInsensitiveFileSystem: boolean
 	) {
 		super();
 		this.client = client;
@@ -365,10 +479,32 @@ export default class BufferSyncSupport extends Disposable {
 
 		this.diagnosticDelayer = new Delayer<any>(300);
 
-		const pathNormalizer = (path: vscode.Uri) => this.client.normalizedPath(path);
-		this.syncedBuffers = new SyncedBufferMap(pathNormalizer, { onCaseInsenitiveFileSystem });
-		this.pendingDiagnostics = new PendingDiagnostics(pathNormalizer, { onCaseInsenitiveFileSystem });
-		this.synchronizer = new BufferSynchronizer(client, pathNormalizer, onCaseInsenitiveFileSystem);
+		const pathNormalizer = (path: vscode.Uri) => this.client.toTsFilePath(path);
+		this.syncedBuffers = new SyncedBufferMap(pathNormalizer, { onCaseInsensitiveFileSystem });
+		this.pendingDiagnostics = new PendingDiagnostics(pathNormalizer, { onCaseInsensitiveFileSystem });
+		this.synchronizer = new BufferSynchronizer(client, pathNormalizer, onCaseInsensitiveFileSystem);
+
+		this._tabResources = this._register(new TabResourceTracker(pathNormalizer, { onCaseInsensitiveFileSystem }));
+		this._register(this._tabResources.onDidChange(e => {
+			if (this.client.configuration.enableProjectDiagnostics) {
+				return;
+			}
+
+			for (const closed of e.closed) {
+				const syncedBuffer = this.syncedBuffers.get(closed);
+				if (syncedBuffer) {
+					this.pendingDiagnostics.delete(closed);
+					this.pendingGetErr?.files.delete(closed);
+				}
+			}
+
+			for (const opened of e.opened) {
+				const syncedBuffer = this.syncedBuffers.get(opened);
+				if (syncedBuffer) {
+					this.requestDiagnostic(syncedBuffer);
+				}
+			}
+		}));
 
 		this.updateConfiguration();
 		vscode.workspace.onDidChangeConfiguration(this.updateConfiguration, this, this._disposables);
@@ -417,7 +553,7 @@ export default class BufferSyncSupport extends Disposable {
 	}
 
 	public toVsCodeResource(resource: vscode.Uri): vscode.Uri {
-		const filepath = this.client.normalizedPath(resource);
+		const filepath = this.client.toTsFilePath(resource);
 		for (const buffer of this.syncedBuffers.allBuffers) {
 			if (buffer.filepath === filepath) {
 				return buffer.resource;
@@ -452,7 +588,7 @@ export default class BufferSyncSupport extends Disposable {
 			return false;
 		}
 		const resource = document.uri;
-		const filepath = this.client.normalizedPath(resource);
+		const filepath = this.client.toTsFilePath(resource);
 		if (!filepath) {
 			return false;
 		}
@@ -473,6 +609,7 @@ export default class BufferSyncSupport extends Disposable {
 		if (!syncedBuffer) {
 			return;
 		}
+
 		this.pendingDiagnostics.delete(resource);
 		this.pendingGetErr?.files.delete(resource);
 		this.syncedBuffers.delete(resource);
@@ -485,7 +622,7 @@ export default class BufferSyncSupport extends Disposable {
 
 	public interruptGetErr<R>(f: () => R): R {
 		if (!this.pendingGetErr
-			|| this.client.configuration.enableProjectDiagnostics // `geterr` happens on seperate server so no need to cancel it.
+			|| this.client.configuration.enableProjectDiagnostics // `geterr` happens on separate server so no need to cancel it.
 		) {
 			return f();
 		}
@@ -607,7 +744,11 @@ export default class BufferSyncSupport extends Disposable {
 		this._validateTypeScript = tsConfig.get<boolean>('validate.enable', true);
 	}
 
-	private shouldValidate(buffer: SyncedBuffer) {
+	private shouldValidate(buffer: SyncedBuffer): boolean {
+		if (!this.client.configuration.enableProjectDiagnostics && !this._tabResources.has(buffer.resource)) { // Only validate resources that are showing to the user
+			return false;
+		}
+
 		switch (buffer.kind) {
 			case BufferKind.JavaScript:
 				return this._validateJavaScript;

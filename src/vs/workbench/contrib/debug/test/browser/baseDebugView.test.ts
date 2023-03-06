@@ -11,22 +11,30 @@ import { HighlightedLabel } from 'vs/base/browser/ui/highlightedlabel/highlighte
 import { LinkDetector } from 'vs/workbench/contrib/debug/browser/linkDetector';
 import { TestInstantiationService } from 'vs/platform/instantiation/test/common/instantiationServiceMock';
 import { workbenchInstantiationService } from 'vs/workbench/test/browser/workbenchTestServices';
-import { createMockSession } from 'vs/workbench/contrib/debug/test/browser/callStack.test';
+import { createTestSession } from 'vs/workbench/contrib/debug/test/browser/callStack.test';
 import { isStatusbarInDebugMode } from 'vs/workbench/contrib/debug/browser/statusbarColorProvider';
 import { State } from 'vs/workbench/contrib/debug/common/debug';
 import { isWindows } from 'vs/base/common/platform';
-import { MockSession, createMockDebugModel } from 'vs/workbench/contrib/debug/test/browser/mockDebug';
+import { createMockDebugModel } from 'vs/workbench/contrib/debug/test/browser/mockDebugModel';
+import { DisposableStore } from 'vs/base/common/lifecycle';
+import { MockSession } from 'vs/workbench/contrib/debug/test/common/mockDebug';
 const $ = dom.$;
 
 suite('Debug - Base Debug View', () => {
+	let disposables: DisposableStore;
 	let linkDetector: LinkDetector;
 
 	/**
 	 * Instantiate services for use by the functions being tested.
 	 */
 	setup(() => {
-		const instantiationService: TestInstantiationService = <TestInstantiationService>workbenchInstantiationService();
+		disposables = new DisposableStore();
+		const instantiationService: TestInstantiationService = <TestInstantiationService>workbenchInstantiationService(undefined, disposables);
 		linkDetector = instantiationService.createInstance(LinkDetector);
+	});
+
+	teardown(() => {
+		disposables.dispose();
 	});
 
 	test('render view tree', () => {
@@ -83,12 +91,13 @@ suite('Debug - Base Debug View', () => {
 		const stackFrame = new StackFrame(thread, 1, null!, 'app.js', 'normal', { startLineNumber: 1, startColumn: 1, endLineNumber: undefined!, endColumn: undefined! }, 0, true);
 		const scope = new Scope(stackFrame, 1, 'local', 1, false, 10, 10);
 
-		let variable = new Variable(session, 1, scope, 2, 'foo', 'bar.foo', undefined!, 0, 0, {}, 'string');
+		let variable = new Variable(session, 1, scope, 2, 'foo', 'bar.foo', undefined!, 0, 0, undefined, {}, 'string');
 		let expression = $('.');
 		let name = $('.');
 		let value = $('.');
-		let label = new HighlightedLabel(name, false);
-		renderVariable(variable, { expression, name, value, label }, false, []);
+		const label = new HighlightedLabel(name);
+		const lazyButton = $('.');
+		renderVariable(variable, { expression, name, value, label, lazyButton }, false, []);
 
 		assert.strictEqual(label.element.textContent, 'foo');
 		assert.strictEqual(value.textContent, '');
@@ -98,7 +107,7 @@ suite('Debug - Base Debug View', () => {
 		expression = $('.');
 		name = $('.');
 		value = $('.');
-		renderVariable(variable, { expression, name, value, label }, false, [], linkDetector);
+		renderVariable(variable, { expression, name, value, label, lazyButton }, false, [], linkDetector);
 		assert.strictEqual(value.textContent, 'hey');
 		assert.strictEqual(label.element.textContent, 'foo:');
 		assert.strictEqual(label.element.title, 'string');
@@ -107,15 +116,15 @@ suite('Debug - Base Debug View', () => {
 		expression = $('.');
 		name = $('.');
 		value = $('.');
-		renderVariable(variable, { expression, name, value, label }, false, [], linkDetector);
+		renderVariable(variable, { expression, name, value, label, lazyButton }, false, [], linkDetector);
 		assert.ok(value.querySelector('a'));
 		assert.strictEqual(value.querySelector('a')!.textContent, variable.value);
 
-		variable = new Variable(session, 1, scope, 2, 'console', 'console', '5', 0, 0, { kind: 'virtual' });
+		variable = new Variable(session, 1, scope, 2, 'console', 'console', '5', 0, 0, undefined, { kind: 'virtual' });
 		expression = $('.');
 		name = $('.');
 		value = $('.');
-		renderVariable(variable, { expression, name, value, label }, false, [], linkDetector);
+		renderVariable(variable, { expression, name, value, label, lazyButton }, false, [], linkDetector);
 		assert.strictEqual(name.className, 'virtual');
 		assert.strictEqual(label.element.textContent, 'console:');
 		assert.strictEqual(label.element.title, 'console');
@@ -124,12 +133,18 @@ suite('Debug - Base Debug View', () => {
 
 	test('statusbar in debug mode', () => {
 		const model = createMockDebugModel();
-		const session = createMockSession(model);
-		assert.strictEqual(isStatusbarInDebugMode(State.Inactive, undefined), false);
-		assert.strictEqual(isStatusbarInDebugMode(State.Initializing, session), false);
-		assert.strictEqual(isStatusbarInDebugMode(State.Running, session), true);
-		assert.strictEqual(isStatusbarInDebugMode(State.Stopped, session), true);
+		const session = createTestSession(model);
+		const session2 = createTestSession(model, undefined, { suppressDebugStatusbar: true });
+		assert.strictEqual(isStatusbarInDebugMode(State.Inactive, []), false);
+		assert.strictEqual(isStatusbarInDebugMode(State.Initializing, [session]), false);
+		assert.strictEqual(isStatusbarInDebugMode(State.Running, [session]), true);
+		assert.strictEqual(isStatusbarInDebugMode(State.Stopped, [session]), true);
+
+		assert.strictEqual(isStatusbarInDebugMode(State.Running, [session2]), false);
+		assert.strictEqual(isStatusbarInDebugMode(State.Running, [session, session2]), true);
+
 		session.configuration.noDebug = true;
-		assert.strictEqual(isStatusbarInDebugMode(State.Running, session), false);
+		assert.strictEqual(isStatusbarInDebugMode(State.Running, [session]), false);
+		assert.strictEqual(isStatusbarInDebugMode(State.Running, [session, session2]), false);
 	});
 });

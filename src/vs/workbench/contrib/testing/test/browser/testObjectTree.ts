@@ -6,20 +6,22 @@
 import { ObjectTree } from 'vs/base/browser/ui/tree/objectTree';
 import { Emitter } from 'vs/base/common/event';
 import { Disposable } from 'vs/base/common/lifecycle';
-import { URI } from 'vs/base/common/uri';
-import { IWorkspaceFolder, IWorkspaceFolderData, IWorkspaceFoldersChangeEvent } from 'vs/platform/workspace/common/workspace';
-import { ITestTreeProjection, TestExplorerTreeElement, TestItemTreeElement } from 'vs/workbench/contrib/testing/browser/explorerProjections/index';
-import { TestSubscriptionListener } from 'vs/workbench/contrib/testing/common/workspaceTestCollectionService';
-import { TestOwnedTestCollection, TestSingleUseCollection } from 'vs/workbench/contrib/testing/test/common/ownedTestCollection';
+import { IWorkspaceFoldersChangeEvent } from 'vs/platform/workspace/common/workspace';
+import { ITestTreeProjection, TestExplorerTreeElement, TestItemTreeElement, TestTreeErrorMessage } from 'vs/workbench/contrib/testing/browser/explorerProjections/index';
+import { MainThreadTestCollection } from 'vs/workbench/contrib/testing/common/mainThreadTestCollection';
+import { TestsDiff, TestsDiffOp } from 'vs/workbench/contrib/testing/common/testTypes';
+import { ITestService } from 'vs/workbench/contrib/testing/common/testService';
+import { testStubs } from 'vs/workbench/contrib/testing/test/common/testStubs';
+import { ITreeSorter } from 'vs/base/browser/ui/tree/tree';
 
-type SerializedTree = { e: string; children?: SerializedTree[], data?: string };
+type SerializedTree = { e: string; children?: SerializedTree[]; data?: string };
 
 const element = document.createElement('div');
 element.style.height = '1000px';
 element.style.width = '200px';
 
-export class TestObjectTree<T> extends ObjectTree<T, any> {
-	constructor(serializer: (node: T) => string) {
+class TestObjectTree<T> extends ObjectTree<T, any> {
+	constructor(serializer: (node: T) => string, sorter?: ITreeSorter<T>) {
 		super(
 			'test',
 			element,
@@ -39,7 +41,7 @@ export class TestObjectTree<T> extends ObjectTree<T, any> {
 				}
 			],
 			{
-				sorter: {
+				sorter: sorter ?? {
 					compare: (a, b) => serializer(a).localeCompare(serializer(b))
 				}
 			}
@@ -54,7 +56,7 @@ export class TestObjectTree<T> extends ObjectTree<T, any> {
 	public getRendered(getProperty?: string) {
 		const elements = element.querySelectorAll<HTMLElement>('.monaco-tl-contents');
 		const sorted = [...elements].sort((a, b) => pos(a) - pos(b));
-		let chain: SerializedTree[] = [{ e: '', children: [] }];
+		const chain: SerializedTree[] = [{ e: '', children: [] }];
 		for (const element of sorted) {
 			const [depthStr, label] = element.textContent!.split(':');
 			const depth = Number(depthStr);
@@ -73,41 +75,52 @@ export class TestObjectTree<T> extends ObjectTree<T, any> {
 
 const pos = (element: Element) => Number(element.parentElement!.parentElement!.getAttribute('aria-posinset'));
 
-export const makeTestWorkspaceFolder = (name: string): IWorkspaceFolder => ({
-	name,
-	uri: URI.file(`/${name}`),
-	index: 0,
-	toResource: path => URI.file(`/${name}/${path}`)
-});
+
+class ByLabelTreeSorter implements ITreeSorter<TestExplorerTreeElement> {
+	public compare(a: TestExplorerTreeElement, b: TestExplorerTreeElement): number {
+		if (a instanceof TestTreeErrorMessage || b instanceof TestTreeErrorMessage) {
+			return (a instanceof TestTreeErrorMessage ? -1 : 0) + (b instanceof TestTreeErrorMessage ? 1 : 0);
+		}
+
+		if (a instanceof TestItemTreeElement && b instanceof TestItemTreeElement && a.test.item.uri && b.test.item.uri && a.test.item.uri.toString() === b.test.item.uri.toString() && a.test.item.range && b.test.item.range) {
+			const delta = a.test.item.range.startLineNumber - b.test.item.range.startLineNumber;
+			if (delta !== 0) {
+				return delta;
+			}
+		}
+
+		return (a.sortText || a.label).localeCompare(b.sortText || b.label);
+	}
+}
 
 // names are hard
 export class TestTreeTestHarness<T extends ITestTreeProjection = ITestTreeProjection> extends Disposable {
-	private readonly owned = new TestOwnedTestCollection();
-	private readonly onDiff = this._register(new Emitter<object>());
+	private readonly onDiff = this._register(new Emitter<TestsDiff>());
 	public readonly onFolderChange = this._register(new Emitter<IWorkspaceFoldersChangeEvent>());
-	public readonly c: TestSingleUseCollection = this._register(this.owned.createForHierarchy());
 	private isProcessingDiff = false;
 	public readonly projection: T;
 	public readonly tree: TestObjectTree<TestExplorerTreeElement>;
 
-	constructor(folders: IWorkspaceFolderData[], makeTree: (listener: TestSubscriptionListener) => T) {
+	constructor(makeTree: (listener: ITestService) => T, public readonly c = testStubs.nested()) {
 		super();
+		this._register(c);
 		this.c.onDidGenerateDiff(d => this.c.setDiff(d /* don't clear during testing */));
+
+		const collection = new MainThreadTestCollection((testId, levels) => {
+			this.c.expand(testId, levels);
+			if (!this.isProcessingDiff) {
+				this.onDiff.fire(this.c.collectDiff());
+			}
+			return Promise.resolve();
+		});
+		this._register(this.onDiff.event(diff => collection.apply(diff)));
+
 		this.projection = this._register(makeTree({
-			workspaceFolderCollections: folders.map(folder => [{ folder }, {
-				expand: (testId: string, levels: number) => {
-					this.c.expand(testId, levels);
-					if (!this.isProcessingDiff) {
-						this.onDiff.fire({ folder: { folder }, diff: this.c.collectDiff() });
-					}
-					return Promise.resolve();
-				},
-				all: [],
-			}]),
-			onDiff: this.onDiff.event,
-			onFolderChange: this.onFolderChange.event,
+			collection,
+			onDidProcessDiff: this.onDiff.event,
 		} as any));
-		this.tree = this._register(new TestObjectTree(t => 'label' in t ? t.label : t.message.toString()));
+		const sorter = new ByLabelTreeSorter();
+		this.tree = this._register(new TestObjectTree(t => 'label' in t ? t.label : t.message.toString(), sorter));
 		this._register(this.tree.onDidChangeCollapseState(evt => {
 			if (evt.node.element instanceof TestItemTreeElement) {
 				this.projection.expandElement(evt.node.element, evt.deep ? Infinity : 0);
@@ -115,10 +128,14 @@ export class TestTreeTestHarness<T extends ITestTreeProjection = ITestTreeProjec
 		}));
 	}
 
-	public flush(folder: IWorkspaceFolderData) {
+	public pushDiff(...diff: TestsDiffOp[]) {
+		this.onDiff.fire(diff);
+	}
+
+	public flush() {
 		this.isProcessingDiff = true;
 		while (this.c.currentDiff.length) {
-			this.onDiff.fire({ folder: { folder }, diff: this.c.collectDiff() });
+			this.onDiff.fire(this.c.collectDiff());
 		}
 		this.isProcessingDiff = false;
 

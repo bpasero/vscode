@@ -126,3 +126,23 @@ export namespace SymbolKind {
 		}
 	}
 }
+
+export namespace CompletionTriggerKind {
+	export function toProtocolCompletionTriggerKind(kind: vscode.CompletionTriggerKind): Proto.CompletionTriggerKind {
+		switch (kind) {
+			case vscode.CompletionTriggerKind.Invoke: return 1;
+			case vscode.CompletionTriggerKind.TriggerCharacter: return 2;
+			case vscode.CompletionTriggerKind.TriggerForIncompleteCompletions: return 3;
+		}
+	}
+}
+
+export namespace OrganizeImportsMode {
+	export function toProtocolOrganizeImportsMode(mode: PConst.OrganizeImportsMode): Proto.OrganizeImportsMode {
+		switch (mode) {
+			case PConst.OrganizeImportsMode.All: return 'All' as Proto.OrganizeImportsMode.All;
+			case PConst.OrganizeImportsMode.SortAndCombine: return 'SortAndCombine' as Proto.OrganizeImportsMode.SortAndCombine;
+			case PConst.OrganizeImportsMode.RemoveUnused: return 'RemoveUnused' as Proto.OrganizeImportsMode.RemoveUnused;
+		}
+	}
+}

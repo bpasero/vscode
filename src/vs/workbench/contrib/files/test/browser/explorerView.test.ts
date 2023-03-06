@@ -12,14 +12,16 @@ import { getContext } from 'vs/workbench/contrib/files/browser/views/explorerVie
 import { listInvalidItemForeground } from 'vs/platform/theme/common/colorRegistry';
 import { CompressedNavigationController } from 'vs/workbench/contrib/files/browser/views/explorerViewer';
 import * as dom from 'vs/base/browser/dom';
-import { Disposable } from 'vs/base/common/lifecycle';
+import { DisposableStore } from 'vs/base/common/lifecycle';
 import { provideDecorations } from 'vs/workbench/contrib/files/browser/views/explorerDecorationsProvider';
+import { TestConfigurationService } from 'vs/platform/configuration/test/common/testConfigurationService';
 const $ = dom.$;
 
 const fileService = new TestFileService();
+const configService = new TestConfigurationService();
 
 function createStat(this: any, path: string, name: string, isFolder: boolean, hasChildren: boolean, size: number, mtime: number, isSymLink = false, isUnknown = false): ExplorerItem {
-	return new ExplorerItem(toResource.call(this, path), fileService, undefined, isFolder, isSymLink, false, name, mtime, isUnknown);
+	return new ExplorerItem(toResource.call(this, path), fileService, configService, undefined, isFolder, isSymLink, false, name, mtime, isUnknown);
 }
 
 suite('Files - ExplorerView', () => {
@@ -32,7 +34,7 @@ suite('Files - ExplorerView', () => {
 		const s4 = createStat.call(this, '/path/to/stat', 'stat', false, false, 8096, d);
 		const noNavigationController = { getCompressedNavigationController: (stat: ExplorerItem) => undefined };
 
-		assert.deepStrictEqual(getContext([s1], [s2, s3, s4], true, noNavigationController), [s1]);
+		assert.deepStrictEqual(getContext([s1], [s2, s3, s4], true, noNavigationController), [s2, s3, s4]);
 		assert.deepStrictEqual(getContext([s1], [s1, s3, s4], true, noNavigationController), [s1, s3, s4]);
 		assert.deepStrictEqual(getContext([s1], [s3, s1, s4], false, noNavigationController), [s1]);
 		assert.deepStrictEqual(getContext([], [s3, s1, s4], false, noNavigationController), []);
@@ -82,7 +84,8 @@ suite('Files - ExplorerView', () => {
 
 		const navigationController = new CompressedNavigationController('id', [s1, s2, s3], {
 			container,
-			elementDisposable: Disposable.None,
+			templateDisposables: new DisposableStore(),
+			elementDisposables: new DisposableStore(),
 			label: <any>{
 				container: label,
 				onDidRender: emitter.event

@@ -3,9 +3,10 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { isWindows } from 'vs/base/common/platform';
 import { CharCode } from 'vs/base/common/charCode';
+import { MarshalledId } from 'vs/base/common/marshallingIds';
 import * as paths from 'vs/base/common/path';
+import { isWindows } from 'vs/base/common/platform';
 
 const _schemePattern = /^\w[\w\d+.-]*$/;
 const _singleSlashStart = /^\//;
@@ -114,29 +115,29 @@ export class URI implements UriComponents {
 	}
 
 	/**
-	 * scheme is the 'http' part of 'http://www.msft.com/some/path?query#fragment'.
+	 * scheme is the 'http' part of 'http://www.example.com/some/path?query#fragment'.
 	 * The part before the first colon.
 	 */
 	readonly scheme: string;
 
 	/**
-	 * authority is the 'www.msft.com' part of 'http://www.msft.com/some/path?query#fragment'.
+	 * authority is the 'www.example.com' part of 'http://www.example.com/some/path?query#fragment'.
 	 * The part between the first double slashes and the next slash.
 	 */
 	readonly authority: string;
 
 	/**
-	 * path is the '/some/path' part of 'http://www.msft.com/some/path?query#fragment'.
+	 * path is the '/some/path' part of 'http://www.example.com/some/path?query#fragment'.
 	 */
 	readonly path: string;
 
 	/**
-	 * query is the 'query' part of 'http://www.msft.com/some/path?query#fragment'.
+	 * query is the 'query' part of 'http://www.example.com/some/path?query#fragment'.
 	 */
 	readonly query: string;
 
 	/**
-	 * fragment is the 'fragment' part of 'http://www.msft.com/some/path?query#fragment'.
+	 * fragment is the 'fragment' part of 'http://www.example.com/some/path?query#fragment'.
 	 */
 	readonly fragment: string;
 
@@ -258,7 +259,7 @@ export class URI implements UriComponents {
 	// ---- parse & validate ------------------------
 
 	/**
-	 * Creates a new URI from a string, e.g. `http://www.msft.com/some/path`,
+	 * Creates a new URI from a string, e.g. `http://www.example.com/some/path`,
 	 * `file:///usr/home`, or `scheme:with/path`.
 	 *
 	 * @param value A string which represents an URI (see `URI#toString`).
@@ -406,7 +407,7 @@ export interface UriComponents {
 }
 
 interface UriState extends UriComponents {
-	$mid: number;
+	$mid: MarshalledId.Uri;
 	external: string;
 	fsPath: string;
 	_sep: 1 | undefined;
@@ -414,7 +415,7 @@ interface UriState extends UriComponents {
 
 const _pathSepMarker = isWindows ? 1 : undefined;
 
-// This class exists so that URI is compatibile with vscode.Uri (API).
+// This class exists so that URI is compatible with vscode.Uri (API).
 class Uri extends URI {
 
 	_formatted: string | null = null;
@@ -441,7 +442,7 @@ class Uri extends URI {
 
 	override toJSON(): UriComponents {
 		const res = <UriState>{
-			$mid: 1
+			$mid: MarshalledId.Uri
 		};
 		// cached state
 		if (this._fsPath) {
@@ -496,7 +497,7 @@ const encodeTable: { [ch: number]: string } = {
 	[CharCode.Space]: '%20',
 };
 
-function encodeURIComponentFast(uriComponent: string, allowSlash: boolean): string {
+function encodeURIComponentFast(uriComponent: string, isPath: boolean, isAuthority: boolean): string {
 	let res: string | undefined = undefined;
 	let nativeEncodePos = -1;
 
@@ -512,7 +513,10 @@ function encodeURIComponentFast(uriComponent: string, allowSlash: boolean): stri
 			|| code === CharCode.Period
 			|| code === CharCode.Underline
 			|| code === CharCode.Tilde
-			|| (allowSlash && code === CharCode.Slash)
+			|| (isPath && code === CharCode.Slash)
+			|| (isAuthority && code === CharCode.OpenSquareBracket)
+			|| (isAuthority && code === CharCode.CloseSquareBracket)
+			|| (isAuthority && code === CharCode.Colon)
 		) {
 			// check if we are delaying native encode
 			if (nativeEncodePos !== -1) {
@@ -630,24 +634,24 @@ function _asFormatted(uri: URI, skipEncoding: boolean): string {
 			// <user>@<auth>
 			const userinfo = authority.substr(0, idx);
 			authority = authority.substr(idx + 1);
-			idx = userinfo.indexOf(':');
+			idx = userinfo.lastIndexOf(':');
 			if (idx === -1) {
-				res += encoder(userinfo, false);
+				res += encoder(userinfo, false, false);
 			} else {
 				// <user>:<pass>@<auth>
-				res += encoder(userinfo.substr(0, idx), false);
+				res += encoder(userinfo.substr(0, idx), false, false);
 				res += ':';
-				res += encoder(userinfo.substr(idx + 1), false);
+				res += encoder(userinfo.substr(idx + 1), false, true);
 			}
 			res += '@';
 		}
 		authority = authority.toLowerCase();
-		idx = authority.indexOf(':');
+		idx = authority.lastIndexOf(':');
 		if (idx === -1) {
-			res += encoder(authority, false);
+			res += encoder(authority, false, true);
 		} else {
 			// <auth>:<port>
-			res += encoder(authority.substr(0, idx), false);
+			res += encoder(authority.substr(0, idx), false, true);
 			res += authority.substr(idx);
 		}
 	}
@@ -665,15 +669,15 @@ function _asFormatted(uri: URI, skipEncoding: boolean): string {
 			}
 		}
 		// encode the rest of the path
-		res += encoder(path, true);
+		res += encoder(path, true, false);
 	}
 	if (query) {
 		res += '?';
-		res += encoder(query, false);
+		res += encoder(query, false, false);
 	}
 	if (fragment) {
 		res += '#';
-		res += !skipEncoding ? encodeURIComponentFast(fragment, false) : fragment;
+		res += !skipEncoding ? encodeURIComponentFast(fragment, false, false) : fragment;
 	}
 	return res;
 }
@@ -700,3 +704,10 @@ function percentDecode(str: string): string {
 	}
 	return str.replace(_rEncodedAsHex, (match) => decodeURIComponentGraceful(match));
 }
+
+/**
+ * Mapped-type that replaces all occurrences of URI with UriComponents
+ */
+export type UriDto<T> = { [K in keyof T]: T[K] extends URI
+	? UriComponents
+	: UriDto<T[K]> };

@@ -3,16 +3,19 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import * as nls from 'vs/nls';
-import * as path from 'vs/base/common/path';
 import { createWriteStream, WriteStream } from 'fs';
 import { Readable } from 'stream';
-import { Sequencer, createCancelablePromise } from 'vs/base/common/async';
-import { Promises } from 'vs/base/node/pfs';
-import { open as _openZip, Entry, ZipFile } from 'yauzl';
-import * as yazl from 'yazl';
+import { createCancelablePromise, Sequencer } from 'vs/base/common/async';
 import { CancellationToken } from 'vs/base/common/cancellation';
+import * as path from 'vs/base/common/path';
 import { assertIsDefined } from 'vs/base/common/types';
+import { Promises } from 'vs/base/node/pfs';
+import * as nls from 'vs/nls';
+import { Entry, open as _openZip, ZipFile } from 'yauzl';
+import * as yazl from 'yazl';
+
+export const CorruptZipMessage: string = 'end of central directory record signature not found';
+const CORRUPT_ZIP_PATTERN = new RegExp(CorruptZipMessage);
 
 export interface IExtractOptions {
 	overwrite?: boolean;
@@ -63,7 +66,7 @@ function toExtractError(err: Error): ExtractError {
 
 	let type: ExtractErrorType | undefined = undefined;
 
-	if (/end of central directory record signature not found/.test(err.message)) {
+	if (CORRUPT_ZIP_PATTERN.test(err.message)) {
 		type = 'CorruptZip';
 	}
 
@@ -81,9 +84,7 @@ function extractEntry(stream: Readable, fileName: string, mode: number, targetPa
 	let istream: WriteStream;
 
 	token.onCancellationRequested(() => {
-		if (istream) {
-			istream.destroy();
-		}
+		istream?.destroy();
 	});
 
 	return Promise.resolve(Promises.mkdir(targetDirName, { recursive: true })).then(() => new Promise<void>((c, e) => {

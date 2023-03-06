@@ -4,12 +4,13 @@
  *--------------------------------------------------------------------------------------------*/
 
 import * as assert from 'assert';
-import * as path from 'vs/base/common/path';
 import { tmpdir } from 'os';
-import { extract } from 'vs/base/node/zip';
-import { Promises } from 'vs/base/node/pfs';
 import { createCancelablePromise } from 'vs/base/common/async';
-import { getRandomTestPath, getPathFromAmdModule } from 'vs/base/test/node/testUtils';
+import { FileAccess } from 'vs/base/common/network';
+import * as path from 'vs/base/common/path';
+import { Promises } from 'vs/base/node/pfs';
+import { extract } from 'vs/base/node/zip';
+import { getRandomTestPath } from 'vs/base/test/node/testUtils';
 
 suite('Zip', () => {
 
@@ -26,7 +27,7 @@ suite('Zip', () => {
 	});
 
 	test('extract should handle directories', async () => {
-		const fixtures = getPathFromAmdModule(require, './fixtures');
+		const fixtures = FileAccess.asFileUri('vs/base/test/node/zip/fixtures').fsPath;
 		const fixture = path.join(fixtures, 'extract.zip');
 
 		await createCancelablePromise(token => extract(fixture, testDir, {}, token));

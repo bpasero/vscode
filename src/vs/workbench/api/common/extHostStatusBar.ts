@@ -3,7 +3,6 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { StatusbarAlignment as MainThreadStatusBarAlignment } from 'vs/workbench/services/statusbar/common/statusbar';
 import { StatusBarAlignment as ExtHostStatusBarAlignment, Disposable, ThemeColor } from './extHostTypes';
 import type * as vscode from 'vscode';
 import { MainContext, MainThreadStatusBarShape, IMainContext, ICommandDto } from './extHost.protocol';
@@ -12,13 +11,17 @@ import { CommandsConverter } from 'vs/workbench/api/common/extHostCommands';
 import { DisposableStore } from 'vs/base/common/lifecycle';
 import { IExtensionDescription } from 'vs/platform/extensions/common/extensions';
 import { MarkdownString } from 'vs/workbench/api/common/extHostTypeConverters';
+import { isNumber } from 'vs/base/common/types';
 
 export class ExtHostStatusBarEntry implements vscode.StatusBarItem {
 
 	private static ID_GEN = 0;
 
 	private static ALLOWED_BACKGROUND_COLORS = new Map<string, ThemeColor>(
-		[['statusBarItem.errorBackground', new ThemeColor('statusBarItem.errorForeground')]]
+		[
+			['statusBarItem.errorBackground', new ThemeColor('statusBarItem.errorForeground')],
+			['statusBarItem.warningBackground', new ThemeColor('statusBarItem.warningForeground')]
+		]
 	);
 
 	#proxy: MainThreadStatusBarShape;
@@ -36,15 +39,15 @@ export class ExtHostStatusBarEntry implements vscode.StatusBarItem {
 	private _visible: boolean = false;
 
 	private _text: string = '';
-	private _tooltip?: string;
-	private _tooltip2?: vscode.MarkdownString | string;
+	private _tooltip?: string | vscode.MarkdownString;
 	private _name?: string;
 	private _color?: string | ThemeColor;
 	private _backgroundColor?: ThemeColor;
-	private readonly _internalCommandRegistration = new DisposableStore();
+	private _latestCommandRegistration?: DisposableStore;
+	private readonly _staleCommandRegistrations = new DisposableStore();
 	private _command?: {
-		readonly fromApi: string | vscode.Command,
-		readonly internal: ICommandDto,
+		readonly fromApi: string | vscode.Command;
+		readonly internal: ICommandDto;
 	};
 
 	private _timeoutHandle: any;
@@ -62,7 +65,28 @@ export class ExtHostStatusBarEntry implements vscode.StatusBarItem {
 
 		this._id = id;
 		this._alignment = alignment;
-		this._priority = priority;
+		this._priority = this.validatePriority(priority);
+	}
+
+	private validatePriority(priority?: number): number | undefined {
+		if (!isNumber(priority)) {
+			return undefined; // using this method to catch `NaN` too!
+		}
+
+		// Our RPC mechanism use JSON to serialize data which does
+		// not support `Infinity` so we need to fill in the number
+		// equivalent as close as possible.
+		// https://github.com/microsoft/vscode/issues/133317
+
+		if (priority === Number.POSITIVE_INFINITY) {
+			return Number.MAX_VALUE;
+		}
+
+		if (priority === Number.NEGATIVE_INFINITY) {
+			return -Number.MAX_VALUE;
+		}
+
+		return priority;
 	}
 
 	public get id(): string {
@@ -85,12 +109,8 @@ export class ExtHostStatusBarEntry implements vscode.StatusBarItem {
 		return this._name;
 	}
 
-	public get tooltip(): string | undefined {
+	public get tooltip(): vscode.MarkdownString | string | undefined {
 		return this._tooltip;
-	}
-
-	public get tooltip2(): string | vscode.MarkdownString | undefined {
-		return this._tooltip2;
 	}
 
 	public get color(): string | ThemeColor | undefined {
@@ -119,13 +139,8 @@ export class ExtHostStatusBarEntry implements vscode.StatusBarItem {
 		this.update();
 	}
 
-	public set tooltip(tooltip: string | undefined) {
+	public set tooltip(tooltip: vscode.MarkdownString | string | undefined) {
 		this._tooltip = tooltip;
-		this.update();
-	}
-
-	public set tooltip2(tooltip: vscode.MarkdownString | string | undefined) {
-		this._tooltip2 = tooltip;
 		this.update();
 	}
 
@@ -148,16 +163,19 @@ export class ExtHostStatusBarEntry implements vscode.StatusBarItem {
 			return;
 		}
 
-		this._internalCommandRegistration.clear();
+		if (this._latestCommandRegistration) {
+			this._staleCommandRegistrations.add(this._latestCommandRegistration);
+		}
+		this._latestCommandRegistration = new DisposableStore();
 		if (typeof command === 'string') {
 			this._command = {
 				fromApi: command,
-				internal: this.#commands.toInternal({ title: '', command }, this._internalCommandRegistration),
+				internal: this.#commands.toInternal({ title: '', command }, this._latestCommandRegistration),
 			};
 		} else if (command) {
 			this._command = {
 				fromApi: command,
-				internal: this.#commands.toInternal(command, this._internalCommandRegistration),
+				internal: this.#commands.toInternal(command, this._latestCommandRegistration),
 			};
 		} else {
 			this._command = undefined;
@@ -220,12 +238,15 @@ export class ExtHostStatusBarEntry implements vscode.StatusBarItem {
 				color = ExtHostStatusBarEntry.ALLOWED_BACKGROUND_COLORS.get(this._backgroundColor.id);
 			}
 
-			const tooltip = this._tooltip2 !== undefined ? MarkdownString.fromStrict(this._tooltip2) : this.tooltip;
+			const tooltip = MarkdownString.fromStrict(this._tooltip);
 
 			// Set to status bar
 			this.#proxy.$setEntry(this._entryId, id, name, this._text, tooltip, this._command?.internal, color,
-				this._backgroundColor, this._alignment === ExtHostStatusBarAlignment.Left ? MainThreadStatusBarAlignment.LEFT : MainThreadStatusBarAlignment.RIGHT,
+				this._backgroundColor, this._alignment === ExtHostStatusBarAlignment.Left,
 				this._priority, this._accessibilityInformation);
+
+			// clean-up state commands _after_ updating the UI
+			this._staleCommandRegistrations.clear();
 		}, 0);
 	}
 

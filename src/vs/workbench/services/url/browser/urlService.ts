@@ -5,10 +5,10 @@
 
 import { IURLService } from 'vs/platform/url/common/url';
 import { URI, UriComponents } from 'vs/base/common/uri';
-import { registerSingleton } from 'vs/platform/instantiation/common/extensions';
+import { InstantiationType, registerSingleton } from 'vs/platform/instantiation/common/extensions';
 import { AbstractURLService } from 'vs/platform/url/common/urlService';
 import { Event } from 'vs/base/common/event';
-import { IWorkbenchEnvironmentService } from 'vs/workbench/services/environment/common/environmentService';
+import { IBrowserWorkbenchEnvironmentService } from 'vs/workbench/services/environment/browser/environmentService';
 import { IOpenerService, IOpener, OpenExternalOptions, OpenInternalOptions, matchesScheme } from 'vs/platform/opener/common/opener';
 import { IProductService } from 'vs/platform/product/common/productService';
 
@@ -46,6 +46,10 @@ class BrowserURLOpener implements IOpener {
 	) { }
 
 	async open(resource: string | URI, options?: OpenInternalOptions | OpenExternalOptions): Promise<boolean> {
+		if ((options as OpenExternalOptions | undefined)?.openExternal) {
+			return false;
+		}
+
 		if (!matchesScheme(resource, this.productService.urlProtocol)) {
 			return false;
 		}
@@ -63,7 +67,7 @@ export class BrowserURLService extends AbstractURLService {
 	private provider: IURLCallbackProvider | undefined;
 
 	constructor(
-		@IWorkbenchEnvironmentService environmentService: IWorkbenchEnvironmentService,
+		@IBrowserWorkbenchEnvironmentService environmentService: IBrowserWorkbenchEnvironmentService,
 		@IOpenerService openerService: IOpenerService,
 		@IProductService productService: IProductService
 	) {
@@ -87,4 +91,4 @@ export class BrowserURLService extends AbstractURLService {
 	}
 }
 
-registerSingleton(IURLService, BrowserURLService, true);
+registerSingleton(IURLService, BrowserURLService, InstantiationType.Delayed);

@@ -6,7 +6,7 @@
 import { IssueReporterStyles, IssueReporterData, ProcessExplorerData, IssueReporterExtensionData } from 'vs/platform/issue/common/issue';
 import { IIssueService } from 'vs/platform/issue/electron-sandbox/issue';
 import { IColorTheme, IThemeService } from 'vs/platform/theme/common/themeService';
-import { textLinkForeground, inputBackground, inputBorder, inputForeground, buttonBackground, buttonHoverBackground, buttonForeground, inputValidationErrorBorder, foreground, inputActiveOptionBorder, scrollbarSliderActiveBackground, scrollbarSliderBackground, scrollbarSliderHoverBackground, editorBackground, editorForeground, listHoverBackground, listHoverForeground, textLinkActiveForeground, inputValidationErrorBackground, inputValidationErrorForeground, listActiveSelectionBackground, listActiveSelectionForeground, listFocusOutline, listFocusBackground, listFocusForeground, activeContrastBorder } from 'vs/platform/theme/common/colorRegistry';
+import { textLinkForeground, inputBackground, inputBorder, inputForeground, buttonBackground, buttonHoverBackground, buttonForeground, inputValidationErrorBorder, foreground, inputActiveOptionBorder, scrollbarSliderActiveBackground, scrollbarSliderBackground, scrollbarSliderHoverBackground, editorBackground, editorForeground, listHoverBackground, listHoverForeground, textLinkActiveForeground, inputValidationErrorBackground, inputValidationErrorForeground, listActiveSelectionBackground, listActiveSelectionForeground, listFocusOutline, listFocusBackground, listFocusForeground, activeContrastBorder, scrollbarShadow } from 'vs/platform/theme/common/colorRegistry';
 import { SIDE_BAR_BACKGROUND } from 'vs/workbench/common/theme';
 import { IExtensionManagementService } from 'vs/platform/extensionManagement/common/extensionManagement';
 import { IWorkbenchExtensionEnablementService } from 'vs/workbench/services/extensionManagement/common/extensionManagement';
@@ -16,12 +16,14 @@ import { INativeWorkbenchEnvironmentService } from 'vs/workbench/services/enviro
 import { ExtensionType } from 'vs/platform/extensions/common/extensions';
 import { platform } from 'vs/base/common/process';
 import { IProductService } from 'vs/platform/product/common/productService';
-import { ITASExperimentService } from 'vs/workbench/services/experiment/common/experimentService';
-import { IAuthenticationService } from 'vs/workbench/services/authentication/browser/authenticationService';
+import { IWorkbenchAssignmentService } from 'vs/workbench/services/assignment/common/assignmentService';
+import { IAuthenticationService } from 'vs/workbench/services/authentication/common/authentication';
 import { registerMainProcessRemoteService } from 'vs/platform/ipc/electron-sandbox/services';
 import { IWorkspaceTrustManagementService } from 'vs/platform/workspace/common/workspaceTrust';
+import { IIntegrityService } from 'vs/workbench/services/integrity/common/integrity';
+import { process } from 'vs/base/parts/sandbox/electron-sandbox/globals';
 
-export class WorkbenchIssueService implements IWorkbenchIssueService {
+export class NativeIssueService implements IWorkbenchIssueService {
 	declare readonly _serviceBrand: undefined;
 
 	constructor(
@@ -32,8 +34,9 @@ export class WorkbenchIssueService implements IWorkbenchIssueService {
 		@INativeWorkbenchEnvironmentService private readonly environmentService: INativeWorkbenchEnvironmentService,
 		@IWorkspaceTrustManagementService private readonly workspaceTrustManagementService: IWorkspaceTrustManagementService,
 		@IProductService private readonly productService: IProductService,
-		@ITASExperimentService private readonly experimentService: ITASExperimentService,
-		@IAuthenticationService private readonly authenticationService: IAuthenticationService
+		@IWorkbenchAssignmentService private readonly experimentService: IWorkbenchAssignmentService,
+		@IAuthenticationService private readonly authenticationService: IAuthenticationService,
+		@IIntegrityService private readonly integrityService: IIntegrityService
 	) { }
 
 	async openReporter(dataOverrides: Partial<IssueReporterData> = {}): Promise<void> {
@@ -44,7 +47,7 @@ export class WorkbenchIssueService implements IWorkbenchIssueService {
 			extensionData.push(...enabledExtensions.map((extension): IssueReporterExtensionData => {
 				const { manifest } = extension;
 				const manifestKeys = manifest.contributes ? Object.keys(manifest.contributes) : [];
-				const isTheme = !manifest.activationEvents && manifestKeys.length === 1 && manifestKeys[0] === 'themes';
+				const isTheme = !manifest.main && !manifest.browser && manifestKeys.length === 1 && manifestKeys[0] === 'themes';
 				const isBuiltin = extension.type === ExtensionType.System;
 				return {
 					name: manifest.name,
@@ -82,14 +85,24 @@ export class WorkbenchIssueService implements IWorkbenchIssueService {
 			// Ignore
 		}
 
+		// air on the side of caution and have false be the default
+		let isUnsupported = false;
+		try {
+			isUnsupported = !(await this.integrityService.isPure()).isPure;
+		} catch (e) {
+			// Ignore
+		}
+
 		const theme = this.themeService.getColorTheme();
 		const issueReporterData: IssueReporterData = Object.assign({
 			styles: getIssueReporterStyles(theme),
 			zoomLevel: getZoomLevel(),
 			enabledExtensions: extensionData,
 			experiments: experiments?.join('\n'),
-			restrictedMode: !this.workspaceTrustManagementService.isWorkpaceTrusted(),
+			restrictedMode: !this.workspaceTrustManagementService.isWorkspaceTrusted(),
+			isUnsupported,
 			githubAccessToken,
+			isSandboxed: process.sandboxed
 		}, dataOverrides);
 		return this.issueService.openReporter(issueReporterData);
 	}
@@ -97,7 +110,7 @@ export class WorkbenchIssueService implements IWorkbenchIssueService {
 	openProcessExplorer(): Promise<void> {
 		const theme = this.themeService.getColorTheme();
 		const data: ProcessExplorerData = {
-			pid: this.environmentService.configuration.mainPid,
+			pid: this.environmentService.mainPid,
 			zoomLevel: getZoomLevel(),
 			styles: {
 				backgroundColor: getColor(theme, editorBackground),
@@ -110,6 +123,10 @@ export class WorkbenchIssueService implements IWorkbenchIssueService {
 				listActiveSelectionBackground: getColor(theme, listActiveSelectionBackground),
 				listActiveSelectionForeground: getColor(theme, listActiveSelectionForeground),
 				listHoverOutline: getColor(theme, activeContrastBorder),
+				scrollbarShadowColor: getColor(theme, scrollbarShadow),
+				scrollbarSliderActiveBackgroundColor: getColor(theme, scrollbarSliderActiveBackground),
+				scrollbarSliderBackgroundColor: getColor(theme, scrollbarSliderBackground),
+				scrollbarSliderHoverBackgroundColor: getColor(theme, scrollbarSliderHoverBackground),
 			},
 			platform: platform,
 			applicationName: this.productService.applicationName
@@ -145,4 +162,4 @@ function getColor(theme: IColorTheme, key: string): string | undefined {
 	return color ? color.toString() : undefined;
 }
 
-registerMainProcessRemoteService(IIssueService, 'issue', { supportsDelayedInstantiation: true });
+registerMainProcessRemoteService(IIssueService, 'issue');

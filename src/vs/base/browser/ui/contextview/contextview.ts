@@ -3,12 +3,12 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import 'vs/css!./contextview';
-import * as DOM from 'vs/base/browser/dom';
-import * as platform from 'vs/base/common/platform';
-import { IDisposable, toDisposable, Disposable, DisposableStore } from 'vs/base/common/lifecycle';
-import { Range } from 'vs/base/common/range';
 import { BrowserFeatures } from 'vs/base/browser/canIUse';
+import * as DOM from 'vs/base/browser/dom';
+import { Disposable, DisposableStore, IDisposable, toDisposable } from 'vs/base/common/lifecycle';
+import * as platform from 'vs/base/common/platform';
+import { Range } from 'vs/base/common/range';
+import 'vs/css!./contextview';
 
 export const enum ContextViewDOMPosition {
 	ABSOLUTE = 1,
@@ -130,7 +130,7 @@ export class ContextView extends Disposable {
 	private shadowRoot: ShadowRoot | null = null;
 	private shadowRootHostElement: HTMLElement | null = null;
 
-	constructor(container: HTMLElement, domPosition: ContextViewDOMPosition) {
+	constructor(container: HTMLElement | null, domPosition: ContextViewDOMPosition) {
 		super();
 
 		this.view = DOM.$('.context-view');
@@ -206,7 +206,7 @@ export class ContextView extends Disposable {
 		this.view.className = 'context-view';
 		this.view.style.top = '0px';
 		this.view.style.left = '0px';
-		this.view.style.zIndex = '2500';
+		this.view.style.zIndex = '2575';
 		this.view.style.position = this.useFixedPosition ? 'fixed' : 'absolute';
 		DOM.show(this.view);
 
@@ -220,9 +220,7 @@ export class ContextView extends Disposable {
 		this.doLayout();
 
 		// Focus
-		if (this.delegate.focus) {
-			this.delegate.focus();
-		}
+		this.delegate.focus?.();
 	}
 
 	getViewElement(): HTMLElement {
@@ -253,20 +251,25 @@ export class ContextView extends Disposable {
 		}
 
 		// Get anchor
-		let anchor = this.delegate!.getAnchor();
+		const anchor = this.delegate!.getAnchor();
 
 		// Compute around
 		let around: IView;
 
 		// Get the element's position and size (to anchor the view)
 		if (DOM.isHTMLElement(anchor)) {
-			let elementPosition = DOM.getDomNodePagePosition(anchor);
+			const elementPosition = DOM.getDomNodePagePosition(anchor);
+
+			// In areas where zoom is applied to the element or its ancestors, we need to adjust the size of the element
+			// e.g. The title bar has counter zoom behavior meaning it applies the inverse of zoom level.
+			// Window Zoom Level: 1.5, Title Bar Zoom: 1/1.5, Size Multiplier: 1.5
+			const zoom = DOM.getDomNodeZoomLevel(anchor);
 
 			around = {
-				top: elementPosition.top,
-				left: elementPosition.left,
-				width: elementPosition.width,
-				height: elementPosition.height
+				top: elementPosition.top * zoom,
+				left: elementPosition.left * zoom,
+				width: elementPosition.width * zoom,
+				height: elementPosition.height * zoom
 			};
 		} else {
 			around = {
@@ -358,14 +361,9 @@ export class ContextView extends Disposable {
 	}
 }
 
-let SHADOW_ROOT_CSS = /* css */ `
+const SHADOW_ROOT_CSS = /* css */ `
 	:host {
 		all: initial; /* 1st rule so subsequent properties are reset. */
-	}
-
-	@font-face {
-		font-family: "codicon";
-		src: url("./codicon.ttf?5d4d76ab2ce5108968ad644d591a16a6") format("truetype");
 	}
 
 	.codicon[class*='codicon-'] {

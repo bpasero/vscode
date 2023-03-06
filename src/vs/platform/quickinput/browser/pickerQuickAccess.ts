@@ -3,12 +3,11 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { IQuickPick, IQuickPickItem } from 'vs/platform/quickinput/common/quickInput';
-import { CancellationToken, CancellationTokenSource } from 'vs/base/common/cancellation';
-import { IQuickPickSeparator, IKeyMods, IQuickPickDidAcceptEvent } from 'vs/base/parts/quickinput/common/quickInput';
-import { IQuickAccessProvider } from 'vs/platform/quickinput/common/quickAccess';
-import { IDisposable, DisposableStore, Disposable, MutableDisposable } from 'vs/base/common/lifecycle';
 import { timeout } from 'vs/base/common/async';
+import { CancellationToken, CancellationTokenSource } from 'vs/base/common/cancellation';
+import { Disposable, DisposableStore, IDisposable, MutableDisposable } from 'vs/base/common/lifecycle';
+import { IKeyMods, IQuickPickDidAcceptEvent, IQuickPickSeparator, IQuickPick, IQuickPickItem } from 'vs/platform/quickinput/common/quickInput';
+import { IQuickAccessProvider, IQuickAccessProviderRunOptions } from 'vs/platform/quickinput/common/quickAccess';
 
 export enum TriggerAction {
 
@@ -73,9 +72,9 @@ export interface IPickerQuickAccessProviderOptions<T extends IPickerQuickAccessI
 }
 
 export type Pick<T> = T | IQuickPickSeparator;
-export type PicksWithActive<T> = { items: readonly Pick<T>[], active?: T };
+export type PicksWithActive<T> = { items: readonly Pick<T>[]; active?: T };
 export type Picks<T> = readonly Pick<T>[] | PicksWithActive<T>;
-export type FastAndSlowPicks<T> = { picks: Picks<T>, additionalPicks: Promise<Picks<T>> };
+export type FastAndSlowPicks<T> = { picks: Picks<T>; additionalPicks: Promise<Picks<T>> };
 
 function isPicksWithActive<T>(obj: unknown): obj is PicksWithActive<T> {
 	const candidate = obj as PicksWithActive<T>;
@@ -97,7 +96,7 @@ export abstract class PickerQuickAccessProvider<T extends IPickerQuickAccessItem
 		super();
 	}
 
-	provide(picker: IQuickPick<T>, token: CancellationToken): IDisposable {
+	provide(picker: IQuickPick<T>, token: CancellationToken, runOptions?: IQuickAccessProviderRunOptions): IDisposable {
 		const disposables = new DisposableStore();
 
 		// Apply options if any
@@ -122,7 +121,7 @@ export abstract class PickerQuickAccessProvider<T extends IPickerQuickAccessItem
 			// Collect picks and support both long running and short or combined
 			const picksToken = picksCts.token;
 			const picksFilter = picker.value.substr(this.prefix.length).trim();
-			const providedPicks = this._getPicks(picksFilter, picksDisposables, picksToken);
+			const providedPicks = this._getPicks(picksFilter, picksDisposables, picksToken, runOptions);
 
 			const applyPicks = (picks: Picks<T>, skipEmpty?: boolean): boolean => {
 				let items: readonly Pick<T>[];
@@ -140,7 +139,8 @@ export abstract class PickerQuickAccessProvider<T extends IPickerQuickAccessItem
 						return false;
 					}
 
-					if (picksFilter.length > 0 && this.options?.noResultsPick) {
+					// We show the no results pick if we have no input to prevent completely empty pickers #172613
+					if ((picksFilter.length > 0 || picker.hideInput) && this.options?.noResultsPick) {
 						items = [this.options.noResultsPick];
 					}
 				}
@@ -298,14 +298,22 @@ export abstract class PickerQuickAccessProvider<T extends IPickerQuickAccessItem
 						case TriggerAction.REFRESH_PICKER:
 							updatePickerItems();
 							break;
-						case TriggerAction.REMOVE_ITEM:
+						case TriggerAction.REMOVE_ITEM: {
 							const index = picker.items.indexOf(item);
 							if (index !== -1) {
 								const items = picker.items.slice();
-								items.splice(index, 1);
+								const removed = items.splice(index, 1);
+								const activeItems = picker.activeItems.filter(activeItem => activeItem !== removed[0]);
+								const keepScrollPositionBefore = picker.keepScrollPosition;
+								picker.keepScrollPosition = true;
 								picker.items = items;
+								if (activeItems) {
+									picker.activeItems = activeItems;
+								}
+								picker.keepScrollPosition = keepScrollPositionBefore;
 							}
 							break;
+						}
 					}
 				}
 			}
@@ -330,5 +338,5 @@ export abstract class PickerQuickAccessProvider<T extends IPickerQuickAccessItem
 	 * @returns the picks either directly, as promise or combined fast and slow results.
 	 * Pickers can return `null` to signal that no change in picks is needed.
 	 */
-	protected abstract _getPicks(filter: string, disposables: DisposableStore, token: CancellationToken): Picks<T> | Promise<Picks<T>> | FastAndSlowPicks<T> | null;
+	protected abstract _getPicks(filter: string, disposables: DisposableStore, token: CancellationToken, runOptions?: IQuickAccessProviderRunOptions): Picks<T> | Promise<Picks<T>> | FastAndSlowPicks<T> | null;
 }

@@ -16,27 +16,26 @@
 
 	// Load workbench main JS, CSS and NLS all in parallel. This is an
 	// optimization to prevent a waterfall of loading to happen, because
-	// we know for a fact that workbench.desktop.sandbox.main will depend on
+	// we know for a fact that workbench.desktop.main will depend on
 	// the related CSS and NLS counterparts.
 	bootstrapWindow.load([
-		'vs/workbench/workbench.desktop.sandbox.main',
+		'vs/workbench/workbench.desktop.main',
 		'vs/nls!vs/workbench/workbench.desktop.main',
 		'vs/css!vs/workbench/workbench.desktop.main'
 	],
-		function (_, configuration) {
+		function (desktopMain, configuration) {
 
 			// Mark start of workbench
 			performance.mark('code/didLoadWorkbenchMain');
 
-			// @ts-ignore
-			return require('vs/workbench/electron-sandbox/desktop.main').main(configuration);
+			return desktopMain.main(configuration);
 		},
 		{
 			configureDeveloperSettings: function (windowConfig) {
 				return {
 					// disable automated devtools opening on error when running extension tests
-					// as this can lead to undeterministic test exectuion (devtools steals focus)
-					forceDisableShowDevtoolsOnError: typeof windowConfig.extensionTestsPath === 'string',
+					// as this can lead to nondeterministic test execution (devtools steals focus)
+					forceDisableShowDevtoolsOnError: typeof windowConfig.extensionTestsPath === 'string' || windowConfig['enable-smoke-test-driver'] === true,
 					// enable devtools keybindings in extension development window
 					forceEnableDeveloperKeybindings: Array.isArray(windowConfig.extensionDevelopmentPath) && windowConfig.extensionDevelopmentPath.length > 0,
 					removeDeveloperKeybindingsAfterLoad: true
@@ -61,34 +60,17 @@
 				window.requestIdleCallback(() => {
 					const canvas = document.createElement('canvas');
 					const context = canvas.getContext('2d');
-					context.clearRect(0, 0, canvas.width, canvas.height);
+					context?.clearRect(0, 0, canvas.width, canvas.height);
 					canvas.remove();
 				}, { timeout: 50 });
 			}
 		}
 	);
 
-	// add default trustedTypes-policy for logging and to workaround
-	// lib/platform limitations
-	window.trustedTypes?.createPolicy('default', {
-		createHTML(value) {
-			// see https://github.com/electron/electron/issues/27211
-			// Electron webviews use a static innerHTML default value and
-			// that isn't trusted. We use a default policy to check for the
-			// exact value of that innerHTML-string and only allow that.
-			if (value === '<!DOCTYPE html><style type="text/css">:host { display: flex; }</style>') {
-				return value;
-			}
-			throw new Error('UNTRUSTED html usage, default trusted types policy should NEVER be reached');
-			// console.trace('UNTRUSTED html usage, default trusted types policy should NEVER be reached');
-			// return value;
-		}
-	});
-
 	//#region Helpers
 
 	/**
-	 * @typedef {import('../../../platform/windows/common/windows').INativeWindowConfiguration} INativeWindowConfiguration
+	 * @typedef {import('../../../platform/window/common/window').INativeWindowConfiguration} INativeWindowConfiguration
 	 * @typedef {import('../../../platform/environment/common/argv').NativeParsedArgs} NativeParsedArgs
 	 *
 	 * @returns {{
@@ -122,10 +104,18 @@
 
 		let data = configuration.partsSplash;
 
-		// high contrast mode has been turned on from the outside, e.g. OS -> ignore stored colors and layouts
-		const isHighContrast = configuration.colorScheme.highContrast && configuration.autoDetectHighContrast;
-		if (data && isHighContrast && data.baseTheme !== 'hc-black') {
-			data = undefined;
+		if (data) {
+			// high contrast mode has been turned by the OS -> ignore stored colors and layouts
+			if (configuration.autoDetectHighContrast && configuration.colorScheme.highContrast) {
+				if ((configuration.colorScheme.dark && data.baseTheme !== 'hc-black') || (!configuration.colorScheme.dark && data.baseTheme !== 'hc-light')) {
+					data = undefined;
+				}
+			} else if (configuration.autoDetectColorScheme) {
+				// OS color scheme is tracked and has changed
+				if ((configuration.colorScheme.dark && data.baseTheme !== 'vs-dark') || (!configuration.colorScheme.dark && data.baseTheme !== 'vs')) {
+					data = undefined;
+				}
+			}
 		}
 
 		// developing an extension -> ignore stored layouts
@@ -139,20 +129,37 @@
 			baseTheme = data.baseTheme;
 			shellBackground = data.colorInfo.editorBackground;
 			shellForeground = data.colorInfo.foreground;
-		} else if (isHighContrast) {
-			baseTheme = 'hc-black';
-			shellBackground = '#000000';
-			shellForeground = '#FFFFFF';
-		} else {
-			baseTheme = 'vs-dark';
-			shellBackground = '#1E1E1E';
-			shellForeground = '#CCCCCC';
+		} else if (configuration.autoDetectHighContrast && configuration.colorScheme.highContrast) {
+			if (configuration.colorScheme.dark) {
+				baseTheme = 'hc-black';
+				shellBackground = '#000000';
+				shellForeground = '#FFFFFF';
+			} else {
+				baseTheme = 'hc-light';
+				shellBackground = '#FFFFFF';
+				shellForeground = '#000000';
+			}
+		} else if (configuration.autoDetectColorScheme) {
+			if (configuration.colorScheme.dark) {
+				baseTheme = 'vs-dark';
+				shellBackground = '#1E1E1E';
+				shellForeground = '#CCCCCC';
+			} else {
+				baseTheme = 'vs';
+				shellBackground = '#FFFFFF';
+				shellForeground = '#000000';
+			}
 		}
 
 		const style = document.createElement('style');
 		style.className = 'initialShellColors';
 		document.head.appendChild(style);
 		style.textContent = `body { background-color: ${shellBackground}; color: ${shellForeground}; margin: 0; padding: 0; }`;
+
+		// set zoom level as soon as possible
+		if (typeof data?.zoomLevel === 'number' && typeof globalThis.vscode?.webFrame?.setZoomLevel === 'function') {
+			globalThis.vscode.webFrame.setZoomLevel(data.zoomLevel);
+		}
 
 		// restore parts if possible (we might not always store layout info)
 		if (data?.layoutInfo) {

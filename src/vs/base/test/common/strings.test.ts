@@ -113,6 +113,17 @@ suite('Strings', () => {
 		assert.strictEqual(strings.format('Foo {0} Bar. {1}', '(foo)', '.test'), 'Foo (foo) Bar. .test');
 	});
 
+	test('format2', () => {
+		assert.strictEqual(strings.format2('Foo Bar', {}), 'Foo Bar');
+		assert.strictEqual(strings.format2('Foo {oops} Bar', {}), 'Foo {oops} Bar');
+		assert.strictEqual(strings.format2('Foo {foo} Bar', { foo: 'bar' }), 'Foo bar Bar');
+		assert.strictEqual(strings.format2('Foo {foo} Bar {foo}', { foo: 'bar' }), 'Foo bar Bar bar');
+		assert.strictEqual(strings.format2('Foo {foo} Bar {bar}{boo}', { foo: 'bar' }), 'Foo bar Bar {bar}{boo}');
+		assert.strictEqual(strings.format2('Foo {foo} Bar {bar}{boo}', { foo: 'bar', bar: 'undefined' }), 'Foo bar Bar undefined{boo}');
+		assert.strictEqual(strings.format2('Foo {foo} Bar {bar}{boo}', { foo: 'bar', bar: '5', boo: false }), 'Foo bar Bar 5false');
+		assert.strictEqual(strings.format2('Foo {foo} Bar. {bar}', { foo: '(foo)', bar: '.test' }), 'Foo (foo) Bar. .test');
+	});
+
 	test('lcut', () => {
 		assert.strictEqual(strings.lcut('foo bar', 0), '');
 		assert.strictEqual(strings.lcut('foo bar', 1), 'bar');
@@ -195,24 +206,6 @@ suite('Strings', () => {
 		assert.strictEqual(strings.containsRTL('a📚📚b'), false);
 		assert.strictEqual(strings.containsRTL('هناك حقيقة مثبتة منذ زمن طويل'), true);
 		assert.strictEqual(strings.containsRTL('זוהי עובדה מבוססת שדעתו'), true);
-	});
-
-	test('containsEmoji', () => {
-		assert.strictEqual(strings.containsEmoji('a'), false);
-		assert.strictEqual(strings.containsEmoji(''), false);
-		assert.strictEqual(strings.containsEmoji(strings.UTF8_BOM_CHARACTER + 'a'), false);
-		assert.strictEqual(strings.containsEmoji('hello world!'), false);
-		assert.strictEqual(strings.containsEmoji('هناك حقيقة مثبتة منذ زمن طويل'), false);
-		assert.strictEqual(strings.containsEmoji('זוהי עובדה מבוססת שדעתו'), false);
-
-		assert.strictEqual(strings.containsEmoji('a📚📚b'), true);
-		assert.strictEqual(strings.containsEmoji('1F600 # 😀 grinning face'), true);
-		assert.strictEqual(strings.containsEmoji('1F47E # 👾 alien monster'), true);
-		assert.strictEqual(strings.containsEmoji('1F467 1F3FD # 👧🏽 girl: medium skin tone'), true);
-		assert.strictEqual(strings.containsEmoji('26EA # ⛪ church'), true);
-		assert.strictEqual(strings.containsEmoji('231B # ⌛ hourglass'), true);
-		assert.strictEqual(strings.containsEmoji('2702 # ✂ scissors'), true);
-		assert.strictEqual(strings.containsEmoji('1F1F7 1F1F4  # 🇷🇴 Romania'), true);
 	});
 
 	test('issue #115221: isEmojiImprecise misses ⭐', () => {
@@ -385,40 +378,6 @@ suite('Strings', () => {
 		assert.strictEqual(strings.getNLines('foo', 0), '');
 	});
 
-	test('encodeUTF8', function () {
-		function assertEncodeUTF8(str: string, expected: number[]): void {
-			const actual = strings.encodeUTF8(str);
-			const actualArr: number[] = [];
-			for (let offset = 0; offset < actual.byteLength; offset++) {
-				actualArr[offset] = actual[offset];
-			}
-			assert.deepStrictEqual(actualArr, expected);
-		}
-
-		function assertDecodeUTF8(data: number[], expected: string): void {
-			const actual = strings.decodeUTF8(new Uint8Array(data));
-			assert.deepStrictEqual(actual, expected);
-		}
-
-		function assertEncodeDecodeUTF8(str: string, buff: number[]): void {
-			assertEncodeUTF8(str, buff);
-			assertDecodeUTF8(buff, str);
-		}
-
-		assertEncodeDecodeUTF8('\u0000', [0]);
-		assertEncodeDecodeUTF8('!', [33]);
-		assertEncodeDecodeUTF8('\u007F', [127]);
-		assertEncodeDecodeUTF8('\u0080', [194, 128]);
-		assertEncodeDecodeUTF8('Ɲ', [198, 157]);
-		assertEncodeDecodeUTF8('\u07FF', [223, 191]);
-		assertEncodeDecodeUTF8('\u0800', [224, 160, 128]);
-		assertEncodeDecodeUTF8('ஂ', [224, 174, 130]);
-		assertEncodeDecodeUTF8('\uffff', [239, 191, 191]);
-		assertEncodeDecodeUTF8('\u10000', [225, 128, 128, 48]);
-		assertEncodeDecodeUTF8('🧝', [240, 159, 167, 157]);
-
-	});
-
 	test('getGraphemeBreakType', () => {
 		assert.strictEqual(strings.getGraphemeBreakType(0xBC1), strings.GraphemeBreakType.SpacingMark);
 	});
@@ -426,5 +385,136 @@ suite('Strings', () => {
 	test('truncate', () => {
 		assert.strictEqual('hello world', strings.truncate('hello world', 100));
 		assert.strictEqual('hello…', strings.truncate('hello world', 5));
+	});
+
+	test('replaceAsync', async () => {
+		let i = 0;
+		assert.strictEqual(await strings.replaceAsync('abcabcabcabc', /b(.)/g, async (match, after) => {
+			assert.strictEqual(match, 'bc');
+			assert.strictEqual(after, 'c');
+			return `${i++}${after}`;
+		}), 'a0ca1ca2ca3c');
+	});
+
+	test('removeAnsiEscapeCodes', () => {
+		const CSI = '\x1b\[';
+		const sequences = [
+			// Base cases from https://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h3-Functions-using-CSI-_-ordered-by-the-final-character_s_
+			`${CSI}42@`,
+			`${CSI}42 @`,
+			`${CSI}42A`,
+			`${CSI}42 A`,
+			`${CSI}42B`,
+			`${CSI}42C`,
+			`${CSI}42D`,
+			`${CSI}42E`,
+			`${CSI}42F`,
+			`${CSI}42G`,
+			`${CSI}42;42H`,
+			`${CSI}42I`,
+			`${CSI}42J`,
+			`${CSI}?42J`,
+			`${CSI}42K`,
+			`${CSI}?42K`,
+			`${CSI}42L`,
+			`${CSI}42M`,
+			`${CSI}42P`,
+			`${CSI}#P`,
+			`${CSI}3#P`,
+			`${CSI}#Q`,
+			`${CSI}3#Q`,
+			`${CSI}#R`,
+			`${CSI}42S`,
+			`${CSI}?1;2;3S`,
+			`${CSI}42T`,
+			`${CSI}42;42;42;42;42T`,
+			`${CSI}>3T`,
+			`${CSI}42X`,
+			`${CSI}42Z`,
+			`${CSI}42^`,
+			`${CSI}42\``,
+			`${CSI}42a`,
+			`${CSI}42b`,
+			`${CSI}42c`,
+			`${CSI}=42c`,
+			`${CSI}>42c`,
+			`${CSI}42d`,
+			`${CSI}42e`,
+			`${CSI}42;42f`,
+			`${CSI}42g`,
+			`${CSI}3h`,
+			`${CSI}?3h`,
+			`${CSI}42i`,
+			`${CSI}?42i`,
+			`${CSI}3l`,
+			`${CSI}?3l`,
+			`${CSI}3m`,
+			`${CSI}>0;0m`,
+			`${CSI}>0m`,
+			`${CSI}?0m`,
+			`${CSI}42n`,
+			`${CSI}>42n`,
+			`${CSI}?42n`,
+			`${CSI}>42p`,
+			`${CSI}!p`,
+			`${CSI}0;0"p`,
+			`${CSI}42$p`,
+			`${CSI}?42$p`,
+			`${CSI}#p`,
+			`${CSI}3#p`,
+			`${CSI}>42q`,
+			`${CSI}42q`,
+			`${CSI}42 q`,
+			`${CSI}42"q`,
+			`${CSI}#q`,
+			`${CSI}42;42r`,
+			`${CSI}?3r`,
+			`${CSI}0;0;0;0;3$r`,
+			`${CSI}s`,
+			`${CSI}0;0s`,
+			`${CSI}>42s`,
+			`${CSI}?3s`,
+			`${CSI}42;42;42t`,
+			`${CSI}>3t`,
+			`${CSI}42 t`,
+			`${CSI}0;0;0;0;3$t`,
+			`${CSI}u`,
+			`${CSI}42 u`,
+			`${CSI}0;0;0;0;0;0;0;0$v`,
+			`${CSI}42$w`,
+			`${CSI}0;0;0;0'w`,
+			`${CSI}42x`,
+			`${CSI}42*x`,
+			`${CSI}0;0;0;0;0$x`,
+			`${CSI}42#y`,
+			`${CSI}0;0;0;0;0;0*y`,
+			`${CSI}42;0'z`,
+			`${CSI}0;1;2;4$z`,
+			`${CSI}3'{`,
+			`${CSI}#{`,
+			`${CSI}3#{`,
+			`${CSI}0;0;0;0\${`,
+			`${CSI}0;0;0;0#|`,
+			`${CSI}42$|`,
+			`${CSI}42'|`,
+			`${CSI}42*|`,
+			`${CSI}#}`,
+			`${CSI}42'}`,
+			`${CSI}42$}`,
+			`${CSI}42'~`,
+			`${CSI}42$~`,
+
+			// Common SGR cases:
+			`${CSI}1;31m`, // multiple attrs
+			`${CSI}105m`, // bright background
+			`${CSI}48:5:128m`, // 256 indexed color
+			`${CSI}48;5;128m`, // 256 indexed color alt
+			`${CSI}38:2:0:255:255:255m`, // truecolor
+			`${CSI}38;2;255;255;255m`, // truecolor alt
+		];
+
+		for (const sequence of sequences) {
+			assert.strictEqual(strings.removeAnsiEscapeCodes(`hello${sequence}world`), 'helloworld', `expect to remove ${JSON.stringify(sequence)}`);
+		}
 	});
 });

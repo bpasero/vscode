@@ -8,7 +8,7 @@ import * as processes from 'vs/base/common/processes';
 
 suite('Processes', () => {
 	test('sanitizeProcessEnvironment', () => {
-		let env = {
+		const env = {
 			FOO: 'bar',
 			ELECTRON_ENABLE_STACK_DUMPING: 'x',
 			ELECTRON_ENABLE_LOGGING: 'x',
@@ -19,15 +19,18 @@ suite('Processes', () => {
 			VSCODE_DEV: 'x',
 			VSCODE_IPC_HOOK: 'x',
 			VSCODE_NLS_CONFIG: 'x',
-			VSCODE_PORTABLE: 'x',
+			VSCODE_PORTABLE: '3',
 			VSCODE_PID: 'x',
+			VSCODE_SHELL_LOGIN: '1',
 			VSCODE_CODE_CACHE_PATH: 'x',
 			VSCODE_NEW_VAR: 'x',
 			GDK_PIXBUF_MODULE_FILE: 'x',
-			GDK_PIXBUF_MODULEDIR: 'x',
+			GDK_PIXBUF_MODULEDIR: 'x'
 		};
 		processes.sanitizeProcessEnvironment(env);
 		assert.strictEqual(env['FOO'], 'bar');
-		assert.strictEqual(Object.keys(env).length, 1);
+		assert.strictEqual(env['VSCODE_SHELL_LOGIN'], '1');
+		assert.strictEqual(env['VSCODE_PORTABLE'], '3');
+		assert.strictEqual(Object.keys(env).length, 3);
 	});
 });

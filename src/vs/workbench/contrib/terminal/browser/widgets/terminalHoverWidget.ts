@@ -9,9 +9,7 @@ import { Widget } from 'vs/base/browser/ui/widget';
 import { ITerminalWidget } from 'vs/workbench/contrib/terminal/browser/widgets/widgets';
 import * as dom from 'vs/base/browser/dom';
 import type { IViewportRange } from 'xterm';
-import { IHoverTarget, IHoverService } from 'vs/workbench/services/hover/browser/hover';
-import { registerThemingParticipant } from 'vs/platform/theme/common/themeService';
-import { editorHoverHighlight } from 'vs/platform/theme/common/colorRegistry';
+import { IHoverTarget, IHoverService, IHoverAction } from 'vs/workbench/services/hover/browser/hover';
 import { IConfigurationService } from 'vs/platform/configuration/common/configuration';
 import { TerminalSettingId } from 'vs/platform/terminal/common/terminal';
 
@@ -19,8 +17,8 @@ const $ = dom.$;
 
 export interface ILinkHoverTargetOptions {
 	readonly viewportRange: IViewportRange;
-	readonly cellDimensions: { width: number, height: number };
-	readonly terminalDimensions: { width: number, height: number };
+	readonly cellDimensions: { width: number; height: number };
+	readonly terminalDimensions: { width: number; height: number };
 	readonly modifierDownCallback?: () => void;
 	readonly modifierUpCallback?: () => void;
 }
@@ -31,6 +29,7 @@ export class TerminalHover extends Disposable implements ITerminalWidget {
 	constructor(
 		private readonly _targetOptions: ILinkHoverTargetOptions,
 		private readonly _text: IMarkdownString,
+		private readonly _actions: IHoverAction[] | undefined,
 		private readonly _linkHandler: (url: string) => any,
 		@IHoverService private readonly _hoverService: IHoverService,
 		@IConfigurationService private readonly _configurationService: IConfigurationService
@@ -50,7 +49,8 @@ export class TerminalHover extends Disposable implements ITerminalWidget {
 		const target = new CellHoverTarget(container, this._targetOptions);
 		const hover = this._hoverService.showHover({
 			target,
-			text: this._text,
+			content: this._text,
+			actions: this._actions,
 			linkHandler: this._linkHandler,
 			// .xterm-hover lets xterm know that the hover is part of a link
 			additionalClasses: ['xterm-hover']
@@ -129,13 +129,3 @@ class CellHoverTarget extends Widget implements IHoverTarget {
 		super.dispose();
 	}
 }
-
-registerThemingParticipant((theme, collector) => {
-	let editorHoverHighlightColor = theme.getColor(editorHoverHighlight);
-	if (editorHoverHighlightColor) {
-		if (editorHoverHighlightColor.isOpaque()) {
-			editorHoverHighlightColor = editorHoverHighlightColor.transparent(0.5);
-		}
-		collector.addRule(`.integrated-terminal .hoverHighlight { background-color: ${editorHoverHighlightColor}; }`);
-	}
-});

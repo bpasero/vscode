@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { Iterable } from 'vs/base/common/iterator';
-import { TestResultState } from 'vs/workbench/api/common/extHostTypes';
+import { TestResultState } from 'vs/workbench/contrib/testing/common/testTypes';
 import { maxPriority, statePriority } from 'vs/workbench/contrib/testing/common/testingStates';
 
 /**
@@ -21,10 +21,10 @@ export interface IComputedStateAccessor<T> {
 export interface IComputedStateAndDurationAccessor<T> extends IComputedStateAccessor<T> {
 	getOwnDuration(item: T): number | undefined;
 	getCurrentComputedDuration(item: T): number | undefined;
-	setComputedDuration(item: T, duration: number): void;
+	setComputedDuration(item: T, duration: number | undefined): void;
 }
 
-export const isDurationAccessor = <T>(accessor: IComputedStateAccessor<T>): accessor is IComputedStateAndDurationAccessor<T> => 'getOwnDuration' in accessor;
+const isDurationAccessor = <T>(accessor: IComputedStateAccessor<T>): accessor is IComputedStateAndDurationAccessor<T> => 'getOwnDuration' in accessor;
 
 /**
  * Gets the computed state for the node.
@@ -32,12 +32,16 @@ export const isDurationAccessor = <T>(accessor: IComputedStateAccessor<T>): acce
  * if it was previously set.
  */
 
-export const getComputedState = <T>(accessor: IComputedStateAccessor<T>, node: T, force = false) => {
+const getComputedState = <T>(accessor: IComputedStateAccessor<T>, node: T, force = false) => {
 	let computed = accessor.getCurrentComputedState(node);
 	if (computed === undefined || force) {
 		computed = accessor.getOwnState(node) ?? TestResultState.Unset;
+
 		for (const child of accessor.getChildren(node)) {
-			computed = maxPriority(computed, getComputedState(accessor, child));
+			const childComputed = getComputedState(accessor, child);
+			// If all children are skipped, make the current state skipped too if unset (#131537)
+			computed = childComputed === TestResultState.Skipped && computed === TestResultState.Unset
+				? TestResultState.Skipped : maxPriority(computed, childComputed);
 		}
 
 		accessor.setComputedState(node, computed);
@@ -46,16 +50,19 @@ export const getComputedState = <T>(accessor: IComputedStateAccessor<T>, node: T
 	return computed;
 };
 
-export const getComputedDuration = <T>(accessor: IComputedStateAndDurationAccessor<T>, node: T, force = false): number => {
+const getComputedDuration = <T>(accessor: IComputedStateAndDurationAccessor<T>, node: T, force = false): number | undefined => {
 	let computed = accessor.getCurrentComputedDuration(node);
 	if (computed === undefined || force) {
 		const own = accessor.getOwnDuration(node);
 		if (own !== undefined) {
 			computed = own;
 		} else {
-			computed = 0;
+			computed = undefined;
 			for (const child of accessor.getChildren(node)) {
-				computed += getComputedDuration(accessor, child);
+				const d = getComputedDuration(accessor, child);
+				if (d !== undefined) {
+					computed = (computed || 0) + d;
+				}
 			}
 		}
 
@@ -73,6 +80,7 @@ export const refreshComputedState = <T>(
 	accessor: IComputedStateAccessor<T>,
 	node: T,
 	explicitNewComputedState?: TestResultState,
+	refreshDuration = true,
 ) => {
 	const oldState = accessor.getCurrentComputedState(node);
 	const oldPriority = statePriority[oldState];
@@ -109,15 +117,15 @@ export const refreshComputedState = <T>(
 		}
 	}
 
-	if (isDurationAccessor(accessor)) {
+	if (isDurationAccessor(accessor) && refreshDuration) {
 		for (const parent of Iterable.concat(Iterable.single(node), accessor.getParents(node))) {
-			const oldDuration = accessor.getCurrentComputedDuration(node);
-			const newDuration = getComputedDuration(accessor, node, true);
+			const oldDuration = accessor.getCurrentComputedDuration(parent);
+			const newDuration = getComputedDuration(accessor, parent, true);
 			if (oldDuration === newDuration) {
 				break;
 			}
 
-			accessor.setComputedDuration(parent, newState);
+			accessor.setComputedDuration(parent, newDuration);
 			toUpdate.add(parent);
 		}
 	}

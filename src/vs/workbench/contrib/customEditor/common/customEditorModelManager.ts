@@ -3,17 +3,17 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { once } from 'vs/base/common/functional';
 import { IReference } from 'vs/base/common/lifecycle';
 import { URI } from 'vs/base/common/uri';
 import { ICustomEditorModel, ICustomEditorModelManager } from 'vs/workbench/contrib/customEditor/common/customEditor';
-import { once } from 'vs/base/common/functional';
 
 export class CustomEditorModelManager implements ICustomEditorModelManager {
 
 	private readonly _references = new Map<string, {
-		readonly viewType: string,
-		readonly model: Promise<ICustomEditorModel>,
-		counter: number
+		readonly viewType: string;
+		readonly model: Promise<ICustomEditorModel>;
+		counter: number;
 	}>();
 
 	public async getAllModels(resource: URI): Promise<ICustomEditorModel[]> {

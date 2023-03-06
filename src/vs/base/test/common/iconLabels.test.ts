@@ -5,15 +5,15 @@
 
 import * as assert from 'assert';
 import { IMatch } from 'vs/base/common/filters';
-import { matchesFuzzyIconAware, parseLabelWithIcons, IParsedLabelWithIcons, stripIcons, escapeIcons, markdownEscapeEscapedIcons } from 'vs/base/common/iconLabels';
+import { escapeIcons, getCodiconAriaLabel, IParsedLabelWithIcons, markdownEscapeEscapedIcons, matchesFuzzyIconAware, parseLabelWithIcons, stripIcons } from 'vs/base/common/iconLabels';
 
-export interface IIconFilter {
+interface IIconFilter {
 	// Returns null if word doesn't match.
 	(query: string, target: IParsedLabelWithIcons): IMatch[] | null;
 }
 
-function filterOk(filter: IIconFilter, word: string, target: IParsedLabelWithIcons, highlights?: { start: number; end: number; }[]) {
-	let r = filter(word, target);
+function filterOk(filter: IIconFilter, word: string, target: IParsedLabelWithIcons, highlights?: { start: number; end: number }[]) {
+	const r = filter(word, target);
 	assert(r);
 	if (highlights) {
 		assert.deepStrictEqual(r, highlights);
@@ -21,6 +21,26 @@ function filterOk(filter: IIconFilter, word: string, target: IParsedLabelWithIco
 }
 
 suite('Icon Labels', () => {
+
+	test('Can get proper aria labels', () => {
+		// note, the spaces in the results are important
+		const testCases = new Map<string, string>([
+			['', ''],
+			['asdf', 'asdf'],
+			['asdf$(squirrel)asdf', 'asdf squirrel asdf'],
+			['asdf $(squirrel) asdf', 'asdf  squirrel  asdf'],
+			['$(rocket)asdf', 'rocket asdf'],
+			['$(rocket) asdf', 'rocket  asdf'],
+			['$(rocket)$(rocket)$(rocket)asdf', 'rocket  rocket  rocket asdf'],
+			['$(rocket) asdf $(rocket)', 'rocket  asdf  rocket'],
+			['$(rocket)asdf$(rocket)', 'rocket asdf rocket'],
+		]);
+
+		for (const [input, expected] of testCases) {
+			assert.strictEqual(getCodiconAriaLabel(input), expected);
+		}
+	});
+
 	test('matchesFuzzyIconAware', () => {
 
 		// Camel Case
@@ -62,6 +82,11 @@ suite('Icon Labels', () => {
 		// Testing #59343
 		filterOk(matchesFuzzyIconAware, 'unt', parseLabelWithIcons('$(primitive-dot) $(file-text) Untitled-1'), [
 			{ start: 30, end: 33 },
+		]);
+
+		// Testing #136172
+		filterOk(matchesFuzzyIconAware, 's', parseLabelWithIcons('$(loading~spin) start'), [
+			{ start: 16, end: 17 },
 		]);
 	});
 

@@ -15,19 +15,17 @@ import * as platform from 'vs/base/common/platform';
 import * as strings from 'vs/base/common/strings';
 import { URI } from 'vs/base/common/uri';
 import { ICodeEditor, IOverlayWidget, IOverlayWidgetPosition } from 'vs/editor/browser/editorBrowser';
-import { EditorAction, EditorCommand, registerEditorAction, registerEditorCommand, registerEditorContribution } from 'vs/editor/browser/editorExtensions';
+import { EditorAction, EditorCommand, EditorContributionInstantiation, registerEditorAction, registerEditorCommand, registerEditorContribution } from 'vs/editor/browser/editorExtensions';
 import { Selection } from 'vs/editor/common/core/selection';
 import { IEditorContribution } from 'vs/editor/common/editorCommon';
 import { EditorContextKeys } from 'vs/editor/common/editorContextKeys';
-import { ToggleTabFocusModeAction } from 'vs/editor/contrib/toggleTabFocusMode/toggleTabFocusMode';
+import { ToggleTabFocusModeAction } from 'vs/editor/contrib/toggleTabFocusMode/browser/toggleTabFocusMode';
 import { IStandaloneEditorConstructionOptions } from 'vs/editor/standalone/browser/standaloneCodeEditor';
 import { IContextKey, IContextKeyService, RawContextKey } from 'vs/platform/contextkey/common/contextkey';
 import { IInstantiationService, ServicesAccessor } from 'vs/platform/instantiation/common/instantiation';
 import { IKeybindingService } from 'vs/platform/keybinding/common/keybinding';
 import { KeybindingWeight } from 'vs/platform/keybinding/common/keybindingsRegistry';
 import { IOpenerService } from 'vs/platform/opener/common/opener';
-import { contrastBorder, editorWidgetBackground, widgetShadow, editorWidgetForeground } from 'vs/platform/theme/common/colorRegistry';
-import { registerThemingParticipant } from 'vs/platform/theme/common/themeService';
 import { AccessibilitySupport } from 'vs/platform/accessibility/common/accessibility';
 import { AccessibilityHelpNLS } from 'vs/editor/common/standaloneStrings';
 import { EditorOption } from 'vs/editor/common/config/editorOptions';
@@ -38,7 +36,7 @@ class AccessibilityHelpController extends Disposable
 	implements IEditorContribution {
 	public static readonly ID = 'editor.contrib.accessibilityHelpController';
 
-	public static get(editor: ICodeEditor): AccessibilityHelpController {
+	public static get(editor: ICodeEditor): AccessibilityHelpController | null {
 		return editor.getContribution<AccessibilityHelpController>(
 			AccessibilityHelpController.ID
 		);
@@ -141,7 +139,7 @@ class AccessibilityHelpWidget extends Widget implements IOverlayWidget {
 				return;
 			}
 
-			if (e.equals(KeyMod.CtrlCmd | KeyCode.KEY_E)) {
+			if (e.equals(KeyMod.CtrlCmd | KeyCode.KeyE)) {
 				alert(AccessibilityHelpNLS.emergencyConfOn);
 
 				this._editor.updateOptions({
@@ -156,7 +154,7 @@ class AccessibilityHelpWidget extends Widget implements IOverlayWidget {
 				e.stopPropagation();
 			}
 
-			if (e.equals(KeyMod.CtrlCmd | KeyCode.KEY_H)) {
+			if (e.equals(KeyMod.CtrlCmd | KeyCode.KeyH)) {
 				alert(AccessibilityHelpNLS.openingDocs);
 
 				let url = (<IStandaloneEditorConstructionOptions>this._editor.getRawOptions()).accessibilityHelpUrl;
@@ -211,7 +209,7 @@ class AccessibilityHelpWidget extends Widget implements IOverlayWidget {
 	}
 
 	private _descriptionForCommand(commandId: string, msg: string, noKbMsg: string): string {
-		let kb = this._keybindingService.lookupKeybinding(commandId);
+		const kb = this._keybindingService.lookupKeybinding(commandId);
 		if (kb) {
 			return strings.format(msg, kb.getAriaLabel());
 		}
@@ -304,18 +302,18 @@ class AccessibilityHelpWidget extends Widget implements IOverlayWidget {
 	}
 
 	private _layout(): void {
-		let editorLayout = this._editor.getLayoutInfo();
+		const editorLayout = this._editor.getLayoutInfo();
 
-		let w = Math.max(5, Math.min(AccessibilityHelpWidget.WIDTH, editorLayout.width - 40));
-		let h = Math.max(5, Math.min(AccessibilityHelpWidget.HEIGHT, editorLayout.height - 40));
+		const w = Math.max(5, Math.min(AccessibilityHelpWidget.WIDTH, editorLayout.width - 40));
+		const h = Math.max(5, Math.min(AccessibilityHelpWidget.HEIGHT, editorLayout.height - 40));
 
 		this._domNode.setWidth(w);
 		this._domNode.setHeight(h);
 
-		let top = Math.round((editorLayout.height - h) / 2);
+		const top = Math.round((editorLayout.height - h) / 2);
 		this._domNode.setTop(top);
 
-		let left = Math.round((editorLayout.width - w) / 2);
+		const left = Math.round((editorLayout.width - w) / 2);
 		this._domNode.setLeft(left);
 	}
 }
@@ -339,14 +337,12 @@ class ShowAccessibilityHelpAction extends EditorAction {
 	}
 
 	public run(accessor: ServicesAccessor, editor: ICodeEditor): void {
-		let controller = AccessibilityHelpController.get(editor);
-		if (controller) {
-			controller.show();
-		}
+		const controller = AccessibilityHelpController.get(editor);
+		controller?.show();
 	}
 }
 
-registerEditorContribution(AccessibilityHelpController.ID, AccessibilityHelpController);
+registerEditorContribution(AccessibilityHelpController.ID, AccessibilityHelpController, EditorContributionInstantiation.Lazy);
 registerEditorAction(ShowAccessibilityHelpAction);
 
 const AccessibilityHelpCommand = EditorCommand.bindToContribution<AccessibilityHelpController>(AccessibilityHelpController.get);
@@ -364,25 +360,3 @@ registerEditorCommand(
 		}
 	})
 );
-
-registerThemingParticipant((theme, collector) => {
-	const widgetBackground = theme.getColor(editorWidgetBackground);
-	if (widgetBackground) {
-		collector.addRule(`.monaco-editor .accessibilityHelpWidget { background-color: ${widgetBackground}; }`);
-	}
-	const widgetForeground = theme.getColor(editorWidgetForeground);
-	if (widgetForeground) {
-		collector.addRule(`.monaco-editor .accessibilityHelpWidget { color: ${widgetForeground}; }`);
-	}
-
-
-	const widgetShadowColor = theme.getColor(widgetShadow);
-	if (widgetShadowColor) {
-		collector.addRule(`.monaco-editor .accessibilityHelpWidget { box-shadow: 0 2px 8px ${widgetShadowColor}; }`);
-	}
-
-	const hcBorder = theme.getColor(contrastBorder);
-	if (hcBorder) {
-		collector.addRule(`.monaco-editor .accessibilityHelpWidget { border: 2px solid ${hcBorder}; }`);
-	}
-});

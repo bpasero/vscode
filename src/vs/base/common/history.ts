@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { INavigator, ArrayNavigator } from 'vs/base/common/navigator';
+import { ArrayNavigator, INavigator } from 'vs/base/common/navigator';
 
 export class HistoryNavigator<T> implements INavigator<T> {
 
@@ -51,6 +51,18 @@ export class HistoryNavigator<T> implements INavigator<T> {
 
 	public last(): T | null {
 		return this._navigator.last();
+	}
+
+	public isFirst(): boolean {
+		return this._currentPosition() === 0;
+	}
+
+	public isLast(): boolean {
+		return this._currentPosition() === this._elements.length - 1;
+	}
+
+	public isNowhere(): boolean {
+		return this._navigator.current() === null;
 	}
 
 	public has(t: T): boolean {
@@ -147,8 +159,13 @@ export class HistoryNavigator2<T> {
 		}
 	}
 
-	replaceLast(value: T): void {
+	/**
+	 * @returns old last value
+	 */
+	replaceLast(value: T): T {
+		const oldValue = this.tail.value;
 		this.tail.value = value;
+		return oldValue;
 	}
 
 	isAtEnd(): boolean {

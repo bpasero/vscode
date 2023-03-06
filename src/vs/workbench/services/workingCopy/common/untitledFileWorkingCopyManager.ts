@@ -3,10 +3,9 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { VSBufferReadableStream } from 'vs/base/common/buffer';
 import { DisposableStore, dispose, IDisposable } from 'vs/base/common/lifecycle';
 import { URI } from 'vs/base/common/uri';
-import { IUntitledFileWorkingCopy, IUntitledFileWorkingCopyModel, IUntitledFileWorkingCopyModelFactory, IUntitledFileWorkingCopySaveDelegate, UntitledFileWorkingCopy } from 'vs/workbench/services/workingCopy/common/untitledFileWorkingCopy';
+import { IUntitledFileWorkingCopy, IUntitledFileWorkingCopyInitialContents, IUntitledFileWorkingCopyModel, IUntitledFileWorkingCopyModelFactory, IUntitledFileWorkingCopySaveDelegate, UntitledFileWorkingCopy } from 'vs/workbench/services/workingCopy/common/untitledFileWorkingCopy';
 import { Event, Emitter } from 'vs/base/common/event';
 import { Schemas } from 'vs/base/common/network';
 import { IWorkingCopyService } from 'vs/workbench/services/workingCopy/common/workingCopyService';
@@ -63,12 +62,11 @@ export interface IUntitledFileWorkingCopyManager<M extends IUntitledFileWorkingC
 export interface INewUntitledFileWorkingCopyOptions {
 
 	/**
-	 * Initial value of the untitled file working copy.
-	 *
-	 * Note: An untitled file working copy with initial
-	 * value is dirty right from the beginning.
+	 * Initial value of the untitled file working copy
+	 * with support to indicate whether this should turn
+	 * the working copy dirty or not.
 	 */
-	contents?: VSBufferReadableStream;
+	contents?: IUntitledFileWorkingCopyInitialContents;
 }
 
 export interface INewUntitledFileWorkingCopyWithAssociatedResourceOptions extends INewUntitledFileWorkingCopyOptions {
@@ -81,7 +79,7 @@ export interface INewUntitledFileWorkingCopyWithAssociatedResourceOptions extend
 	 * Note: currently it is not possible to specify the `scheme` to use. The
 	 * untitled file working copy will saved to the default local or remote resource.
 	 */
-	associatedResource: { authority?: string; path?: string; query?: string; fragment?: string; }
+	associatedResource: { authority?: string; path?: string; query?: string; fragment?: string };
 }
 
 export interface INewOrExistingUntitledFileWorkingCopyOptions extends INewUntitledFileWorkingCopyOptions {
@@ -154,7 +152,7 @@ export class UntitledFileWorkingCopyManager<M extends IUntitledFileWorkingCopyMo
 	private massageOptions(options: IInternalUntitledFileWorkingCopyOptions): IInternalUntitledFileWorkingCopyOptions {
 		const massagedOptions: IInternalUntitledFileWorkingCopyOptions = Object.create(null);
 
-		// Handle associcated resource
+		// Handle associated resource
 		if (options.associatedResource) {
 			massagedOptions.untitledResource = URI.from({
 				scheme: Schemas.untitled,
@@ -184,7 +182,13 @@ export class UntitledFileWorkingCopyManager<M extends IUntitledFileWorkingCopyMo
 		if (!untitledResource) {
 			let counter = 1;
 			do {
-				untitledResource = URI.from({ scheme: Schemas.untitled, path: `Untitled-${counter}` });
+				untitledResource = URI.from({
+					scheme: Schemas.untitled,
+					path: `Untitled-${counter}`,
+					query: this.workingCopyTypeId ?
+						`typeId=${this.workingCopyTypeId}` : // distinguish untitled resources among others by encoding the `typeId` as query param
+						undefined							 // keep untitled resources for text files as they are (when `typeId === ''`)
+				});
 				counter++;
 			} while (this.has(untitledResource));
 		}
@@ -229,15 +233,17 @@ export class UntitledFileWorkingCopyManager<M extends IUntitledFileWorkingCopyMo
 		}
 	}
 
-	protected override remove(resource: URI): void {
-		super.remove(resource);
+	protected override remove(resource: URI): boolean {
+		const removed = super.remove(resource);
 
-		// Dispose any exsting working copy listeners
+		// Dispose any existing working copy listeners
 		const workingCopyListener = this.mapResourceToWorkingCopyListeners.get(resource);
 		if (workingCopyListener) {
 			dispose(workingCopyListener);
 			this.mapResourceToWorkingCopyListeners.delete(resource);
 		}
+
+		return removed;
 	}
 
 	//#endregion

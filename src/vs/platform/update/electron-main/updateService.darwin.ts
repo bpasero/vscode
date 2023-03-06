@@ -4,18 +4,18 @@
  *--------------------------------------------------------------------------------------------*/
 
 import * as electron from 'electron';
-import { DisposableStore } from 'vs/base/common/lifecycle';
-import { Event } from 'vs/base/common/event';
 import { memoize } from 'vs/base/common/decorators';
+import { Event } from 'vs/base/common/event';
+import { DisposableStore } from 'vs/base/common/lifecycle';
 import { IConfigurationService } from 'vs/platform/configuration/common/configuration';
-import { ILifecycleMainService } from 'vs/platform/lifecycle/electron-main/lifecycleMainService';
-import { State, IUpdate, StateType, UpdateType } from 'vs/platform/update/common/update';
-import { ITelemetryService } from 'vs/platform/telemetry/common/telemetry';
 import { IEnvironmentMainService } from 'vs/platform/environment/electron-main/environmentMainService';
+import { ILifecycleMainService } from 'vs/platform/lifecycle/electron-main/lifecycleMainService';
 import { ILogService } from 'vs/platform/log/common/log';
-import { AbstractUpdateService, createUpdateURL, UpdateNotAvailableClassification } from 'vs/platform/update/electron-main/abstractUpdateService';
-import { IRequestService } from 'vs/platform/request/common/request';
 import { IProductService } from 'vs/platform/product/common/productService';
+import { IRequestService } from 'vs/platform/request/common/request';
+import { ITelemetryService } from 'vs/platform/telemetry/common/telemetry';
+import { IUpdate, State, StateType, UpdateType } from 'vs/platform/update/common/update';
+import { AbstractUpdateService, createUpdateURL, UpdateNotAvailableClassification } from 'vs/platform/update/electron-main/abstractUpdateService';
 
 export class DarwinUpdateService extends AbstractUpdateService {
 
@@ -38,8 +38,8 @@ export class DarwinUpdateService extends AbstractUpdateService {
 		super(lifecycleMainService, configurationService, environmentMainService, requestService, logService, productService);
 	}
 
-	override initialize(): void {
-		super.initialize();
+	override async initialize(): Promise<void> {
+		await super.initialize();
 		this.onRawError(this.onError, this, this.disposables);
 		this.onRawUpdateAvailable(this.onUpdateAvailable, this, this.disposables);
 		this.onRawUpdateDownloaded(this.onUpdateDownloaded, this, this.disposables);
@@ -92,7 +92,9 @@ export class DarwinUpdateService extends AbstractUpdateService {
 		}
 
 		type UpdateDownloadedClassification = {
-			version: { classification: 'SystemMetaData', purpose: 'FeatureInsight' };
+			owner: 'joaomoreno';
+			version: { classification: 'SystemMetaData'; purpose: 'FeatureInsight'; comment: 'The version number of the new VS Code that has been downloaded.' };
+			comment: 'This is used to know how often VS Code has successfully downloaded the update.';
 		};
 		this.telemetryService.publicLog2<{ version: String }, UpdateDownloadedClassification>('update:downloaded', { version: update.version });
 

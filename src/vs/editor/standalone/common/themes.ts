@@ -3,9 +3,9 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { editorActiveIndentGuides, editorIndentGuides } from 'vs/editor/common/view/editorColorRegistry';
-import { IStandaloneThemeData } from 'vs/editor/standalone/common/standaloneThemeService';
-import { editorBackground, editorForeground, editorInactiveSelection, editorSelectionHighlight, listFocusHighlightForeground } from 'vs/platform/theme/common/colorRegistry';
+import { editorActiveIndentGuides, editorIndentGuides } from 'vs/editor/common/core/editorColorRegistry';
+import { IStandaloneThemeData } from 'vs/editor/standalone/common/standaloneTheme';
+import { editorBackground, editorForeground, editorInactiveSelection, editorSelectionHighlight } from 'vs/platform/theme/common/colorRegistry';
 
 /* -------------------------------- Begin vs theme -------------------------------- */
 export const vs: IStandaloneThemeData = {
@@ -73,8 +73,7 @@ export const vs: IStandaloneThemeData = {
 		[editorInactiveSelection]: '#E5EBF1',
 		[editorIndentGuides]: '#D3D3D3',
 		[editorActiveIndentGuides]: '#939393',
-		[editorSelectionHighlight]: '#ADD6FF4D',
-		[listFocusHighlightForeground]: '#9DDDFF'
+		[editorSelectionHighlight]: '#ADD6FF4D'
 	}
 };
 /* -------------------------------- End vs theme -------------------------------- */
@@ -210,3 +209,63 @@ export const hc_black: IStandaloneThemeData = {
 	}
 };
 /* -------------------------------- End hc-black theme -------------------------------- */
+
+/* -------------------------------- Begin hc-light theme -------------------------------- */
+export const hc_light: IStandaloneThemeData = {
+	base: 'hc-light',
+	inherit: false,
+	rules: [
+		{ token: '', foreground: '292929', background: 'FFFFFF' },
+		{ token: 'invalid', foreground: 'B5200D' },
+		{ token: 'emphasis', fontStyle: 'italic' },
+		{ token: 'strong', fontStyle: 'bold' },
+
+		{ token: 'variable', foreground: '264F70' },
+		{ token: 'variable.predefined', foreground: '4864AA' },
+		{ token: 'constant', foreground: 'dd0000' },
+		{ token: 'comment', foreground: '008000' },
+		{ token: 'number', foreground: '098658' },
+		{ token: 'number.hex', foreground: '3030c0' },
+		{ token: 'regexp', foreground: '800000' },
+		{ token: 'annotation', foreground: '808080' },
+		{ token: 'type', foreground: '008080' },
+
+		{ token: 'delimiter', foreground: '000000' },
+		{ token: 'delimiter.html', foreground: '383838' },
+
+		{ token: 'tag', foreground: '800000' },
+		{ token: 'tag.id.pug', foreground: '4F76AC' },
+		{ token: 'tag.class.pug', foreground: '4F76AC' },
+		{ token: 'meta.scss', foreground: '800000' },
+		{ token: 'metatag', foreground: 'e00000' },
+		{ token: 'metatag.content.html', foreground: 'B5200D' },
+		{ token: 'metatag.html', foreground: '808080' },
+		{ token: 'metatag.xml', foreground: '808080' },
+		{ token: 'metatag.php', fontStyle: 'bold' },
+
+		{ token: 'key', foreground: '863B00' },
+		{ token: 'string.key.json', foreground: 'A31515' },
+		{ token: 'string.value.json', foreground: '0451A5' },
+
+		{ token: 'attribute.name', foreground: '264F78' },
+		{ token: 'attribute.value', foreground: '0451A5' },
+
+		{ token: 'string', foreground: 'A31515' },
+		{ token: 'string.sql', foreground: 'B5200D' },
+
+		{ token: 'keyword', foreground: '0000FF' },
+		{ token: 'keyword.flow', foreground: 'AF00DB' },
+
+		{ token: 'operator.sql', foreground: '778899' },
+		{ token: 'operator.swift', foreground: '666666' },
+		{ token: 'predefined.sql', foreground: 'C700C7' },
+	],
+	colors: {
+		[editorBackground]: '#FFFFFF',
+		[editorForeground]: '#292929',
+		[editorIndentGuides]: '#292929',
+		[editorActiveIndentGuides]: '#292929',
+	}
+};
+/* -------------------------------- End hc-light theme -------------------------------- */
+

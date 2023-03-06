@@ -10,8 +10,8 @@ import { ITypeScriptServiceClient } from '../typescriptService';
 import API from '../utils/api';
 import * as fileSchemes from '../utils/fileSchemes';
 import { doesResourceLookLikeAJavaScriptFile, doesResourceLookLikeATypeScriptFile } from '../utils/languageDescription';
-import * as typeConverters from '../utils/typeConverters';
 import { parseKindModifier } from '../utils/modifiers';
+import * as typeConverters from '../utils/typeConverters';
 
 function getSymbolKind(item: Proto.NavtoItem): vscode.SymbolKind {
 	switch (item.kind) {
@@ -80,13 +80,13 @@ class TypeScriptWorkspaceSymbolProvider implements vscode.WorkspaceSymbolProvide
 				const path = vscode.Uri.file(JSON.parse(document.uri.query)?.path);
 				if (doesResourceLookLikeATypeScriptFile(path) || doesResourceLookLikeAJavaScriptFile(path)) {
 					const document = await vscode.workspace.openTextDocument(path);
-					return this.client.toOpenedFilePath(document);
+					return this.client.toOpenTsFilePath(document);
 				}
 			} catch {
 				// noop
 			}
 		}
-		return this.client.toOpenedFilePath(document);
+		return this.client.toOpenTsFilePath(document);
 	}
 
 	private toSymbolInformation(item: Proto.NavtoItem) {

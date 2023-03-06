@@ -30,20 +30,25 @@ export interface IHoverService {
 	 * });
 	 * ```
 	 */
-	showHover(options: IHoverOptions, focus?: boolean): IDisposable | undefined;
+	showHover(options: IHoverOptions, focus?: boolean): IHoverWidget | undefined;
 
 	/**
-	 * Hides the hover if it was visible.
+	 * Hides the hover if it was visible. This call will be ignored if the the hover is currently
+	 * "locked" via the alt/option key.
 	 */
 	hideHover(): void;
 }
 
+export interface IHoverWidget extends IDisposable {
+	readonly isDisposed: boolean;
+}
+
 export interface IHoverOptions {
 	/**
-	 * The text to display in the primary section of the hover. The type of text determines the
+	 * The content to display in the primary section of the hover. The type of text determines the
 	 * default `hideOnHover` behavior.
 	 */
-	text: IMarkdownString | string;
+	content: IMarkdownString | string | HTMLElement;
 
 	/**
 	 * The target for the hover. This determines the position of the hover and it will only be
@@ -52,6 +57,13 @@ export interface IHoverOptions {
 	 * dispose method is required.
 	 */
 	target: IHoverTarget | HTMLElement;
+
+	/**
+	 * An ID to associate with the hover to be used as an equality check. Normally when calling
+	 * {@link IHoverService.showHover} the options object itself is used to determine if the hover
+	 * is the same one that is already showing, when this is set, the ID will be used instead.
+	 */
+	id?: number | string;
 
 	/**
 	 * A set of actions for the hover's "status bar".
@@ -64,7 +76,7 @@ export interface IHoverOptions {
 	additionalClasses?: string[];
 
 	/**
-	 * An optional  link handler for markdown links, if this is not provided the IOpenerService will
+	 * An optional link handler for markdown links, if this is not provided the IOpenerService will
 	 * be used to open the links using its default options.
 	 */
 	linkHandler?(url: string): void;
@@ -82,10 +94,22 @@ export interface IHoverOptions {
 	hideOnHover?: boolean;
 
 	/**
-	 * Position of the hover. Default is to show above the target.
-	 * It will be ignored if there is not enough room to layout the hover in the specified position.
+	 * Whether to hide the hover when a key is pressed.
+	 */
+	hideOnKeyDown?: boolean;
+
+	/**
+	 * Position of the hover. The default is to show above the target. This option will be ignored
+	 * if there is not enough room to layout the hover in the specified position, unless the
+	 * forcePosition option is set.
 	 */
 	hoverPosition?: HoverPosition;
+
+	/**
+	 * Force the hover position, reducing the size of the hover instead of adjusting the hover
+	 * position.
+	 */
+	forcePosition?: boolean;
 
 	/**
 	 * Whether to show the hover pointer
@@ -96,6 +120,27 @@ export interface IHoverOptions {
 	 * Whether to show a compact hover
 	 */
 	compact?: boolean;
+
+	/**
+	 * Whether to skip the fade in animation, this should be used when hovering from one hover to
+	 * another in the same group so it looks like the hover is moving from one element to the other.
+	 */
+	skipFadeInAnimation?: boolean;
+
+	/**
+	 * Whether to trap focus in the following ways:
+	 * - When the hover closes, focus goes to the element that had focus before the hover opened
+	 * - If there are elements in the hover to focus, focus stays inside of the hover when tabbing
+	 */
+	trapFocus?: boolean;
+
+	/*
+	 * The container to pass to {@link IContextViewProvider.showContextView} which renders the hover
+	 * in. This is particularly useful for more natural tab focusing behavior, where the hover is
+	 * created as the next tab index after the element being hovered and/or to workaround the
+	 * element's container hiding on `focusout`.
+	 */
+	container?: HTMLElement;
 }
 
 export interface IHoverAction {

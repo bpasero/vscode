@@ -14,7 +14,7 @@ import { KeyChord, KeyMod, KeyCode } from 'vs/base/common/keyCodes';
 import { IProductService } from 'vs/platform/product/common/productService';
 import { ServicesAccessor } from 'vs/platform/instantiation/common/instantiation';
 import { KeybindingWeight } from 'vs/platform/keybinding/common/keybindingsRegistry';
-import { CATEGORIES } from 'vs/workbench/common/actions';
+import { Categories } from 'vs/platform/action/common/actionCommonCategories';
 
 class KeybindingsReferenceAction extends Action2 {
 
@@ -29,12 +29,12 @@ class KeybindingsReferenceAction extends Action2 {
 				mnemonicTitle: localize({ key: 'miKeyboardShortcuts', comment: ['&& denotes a mnemonic'] }, "&&Keyboard Shortcuts Reference"),
 				original: 'Keyboard Shortcuts Reference'
 			},
-			category: CATEGORIES.Help,
+			category: Categories.Help,
 			f1: true,
 			keybinding: {
 				weight: KeybindingWeight.WorkbenchContrib,
 				when: null,
-				primary: KeyChord(KeyMod.CtrlCmd | KeyCode.KEY_K, KeyMod.CtrlCmd | KeyCode.KEY_R)
+				primary: KeyChord(KeyMod.CtrlCmd | KeyCode.KeyK, KeyMod.CtrlCmd | KeyCode.KeyR)
 			},
 			menu: {
 				id: MenuId.MenubarHelpMenu,
@@ -57,18 +57,18 @@ class KeybindingsReferenceAction extends Action2 {
 
 class OpenIntroductoryVideosUrlAction extends Action2 {
 
-	static readonly ID = 'workbench.action.openIntroductoryVideosUrl';
+	static readonly ID = 'workbench.action.openVideoTutorialsUrl';
 	static readonly AVAILABLE = !!product.introductoryVideosUrl;
 
 	constructor() {
 		super({
 			id: OpenIntroductoryVideosUrlAction.ID,
 			title: {
-				value: localize('openIntroductoryVideosUrl', "Introductory Videos"),
-				mnemonicTitle: localize({ key: 'miIntroductoryVideos', comment: ['&& denotes a mnemonic'] }, "Introductory &&Videos"),
-				original: 'Introductory Videos'
+				value: localize('openVideoTutorialsUrl', "Video Tutorials"),
+				mnemonicTitle: localize({ key: 'miVideoTutorials', comment: ['&& denotes a mnemonic'] }, "&&Video Tutorials"),
+				original: 'Video Tutorials'
 			},
-			category: CATEGORIES.Help,
+			category: Categories.Help,
 			f1: true,
 			menu: {
 				id: MenuId.MenubarHelpMenu,
@@ -101,7 +101,7 @@ class OpenTipsAndTricksUrlAction extends Action2 {
 				mnemonicTitle: localize({ key: 'miTipsAndTricks', comment: ['&& denotes a mnemonic'] }, "Tips and Tri&&cks"),
 				original: 'Tips and Tricks'
 			},
-			category: CATEGORIES.Help,
+			category: Categories.Help,
 			f1: true,
 			menu: {
 				id: MenuId.MenubarHelpMenu,
@@ -134,7 +134,7 @@ class OpenDocumentationUrlAction extends Action2 {
 				mnemonicTitle: localize({ key: 'miDocumentation', comment: ['&& denotes a mnemonic'] }, "&&Documentation"),
 				original: 'Documentation'
 			},
-			category: CATEGORIES.Help,
+			category: Categories.Help,
 			f1: true,
 			menu: {
 				id: MenuId.MenubarHelpMenu,
@@ -163,7 +163,7 @@ class OpenNewsletterSignupUrlAction extends Action2 {
 		super({
 			id: OpenNewsletterSignupUrlAction.ID,
 			title: { value: localize('newsletterSignup', "Signup for the VS Code Newsletter"), original: 'Signup for the VS Code Newsletter' },
-			category: CATEGORIES.Help,
+			category: Categories.Help,
 			f1: true
 		});
 	}
@@ -192,7 +192,7 @@ class OpenTwitterUrlAction extends Action2 {
 				mnemonicTitle: localize({ key: 'miTwitter', comment: ['&& denotes a mnemonic'] }, "&&Join Us on Twitter"),
 				original: 'Join Us on Twitter'
 			},
-			category: CATEGORIES.Help,
+			category: Categories.Help,
 			f1: true,
 			menu: {
 				id: MenuId.MenubarHelpMenu,
@@ -225,7 +225,7 @@ class OpenRequestFeatureUrlAction extends Action2 {
 				mnemonicTitle: localize({ key: 'miUserVoice', comment: ['&& denotes a mnemonic'] }, "&&Search Feature Requests"),
 				original: 'Search Feature Requests'
 			},
-			category: CATEGORIES.Help,
+			category: Categories.Help,
 			f1: true,
 			menu: {
 				id: MenuId.MenubarHelpMenu,
@@ -258,7 +258,7 @@ class OpenLicenseUrlAction extends Action2 {
 				mnemonicTitle: localize({ key: 'miLicense', comment: ['&& denotes a mnemonic'] }, "View &&License"),
 				original: 'View License'
 			},
-			category: CATEGORIES.Help,
+			category: Categories.Help,
 			f1: true,
 			menu: {
 				id: MenuId.MenubarHelpMenu,
@@ -296,7 +296,7 @@ class OpenPrivacyStatementUrlAction extends Action2 {
 				mnemonicTitle: localize({ key: 'miPrivacyStatement', comment: ['&& denotes a mnemonic'] }, "Privac&&y Statement"),
 				original: 'Privacy Statement'
 			},
-			category: CATEGORIES.Help,
+			category: Categories.Help,
 			f1: true,
 			menu: {
 				id: MenuId.MenubarHelpMenu,
@@ -311,12 +311,7 @@ class OpenPrivacyStatementUrlAction extends Action2 {
 		const openerService = accessor.get(IOpenerService);
 
 		if (productService.privacyStatementUrl) {
-			if (language) {
-				const queryArgChar = productService.privacyStatementUrl.indexOf('?') > 0 ? '&' : '?';
-				openerService.open(URI.parse(`${productService.privacyStatementUrl}${queryArgChar}lang=${language}`));
-			} else {
-				openerService.open(URI.parse(productService.privacyStatementUrl));
-			}
+			openerService.open(URI.parse(productService.privacyStatementUrl));
 		}
 	}
 }

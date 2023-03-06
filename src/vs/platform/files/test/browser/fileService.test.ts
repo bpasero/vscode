@@ -4,15 +4,15 @@
  *--------------------------------------------------------------------------------------------*/
 
 import * as assert from 'assert';
-import { FileService } from 'vs/platform/files/common/fileService';
-import { URI } from 'vs/base/common/uri';
-import { IFileSystemProviderRegistrationEvent, FileSystemProviderCapabilities, IFileSystemProviderCapabilitiesChangeEvent, FileOpenOptions, FileReadStreamOptions, IStat, FileType } from 'vs/platform/files/common/files';
+import { DeferredPromise, timeout } from 'vs/base/common/async';
+import { CancellationToken, CancellationTokenSource } from 'vs/base/common/cancellation';
 import { IDisposable, toDisposable } from 'vs/base/common/lifecycle';
-import { NullLogService } from 'vs/platform/log/common/log';
-import { timeout } from 'vs/base/common/async';
-import { NullFileSystemProvider } from 'vs/platform/files/test/common/nullFileSystemProvider';
 import { consumeStream, newWriteableStream, ReadableStreamEvents } from 'vs/base/common/stream';
-import { CancellationToken } from 'vs/base/common/cancellation';
+import { URI } from 'vs/base/common/uri';
+import { IFileOpenOptions, IFileReadStreamOptions, FileSystemProviderCapabilities, FileType, IFileSystemProviderCapabilitiesChangeEvent, IFileSystemProviderRegistrationEvent, IStat } from 'vs/platform/files/common/files';
+import { FileService } from 'vs/platform/files/common/fileService';
+import { NullFileSystemProvider } from 'vs/platform/files/test/common/nullFileSystemProvider';
+import { NullLogService } from 'vs/platform/log/common/log';
 
 suite('File Service', () => {
 
@@ -21,7 +21,8 @@ suite('File Service', () => {
 		const resource = URI.parse('test://foo/bar');
 		const provider = new NullFileSystemProvider();
 
-		assert.strictEqual(service.canHandleResource(resource), false);
+		assert.strictEqual(await service.canHandleResource(resource), false);
+		assert.strictEqual(service.hasProvider(resource), false);
 		assert.strictEqual(service.getProvider(resource.scheme), undefined);
 
 		const registrations: IFileSystemProviderRegistrationEvent[] = [];
@@ -48,9 +49,8 @@ suite('File Service', () => {
 			}
 		});
 
-		await service.activateProvider('test');
-
-		assert.strictEqual(service.canHandleResource(resource), true);
+		assert.strictEqual(await service.canHandleResource(resource), true);
+		assert.strictEqual(service.hasProvider(resource), true);
 		assert.strictEqual(service.getProvider(resource.scheme), provider);
 
 		assert.strictEqual(registrations.length, 1);
@@ -73,7 +73,8 @@ suite('File Service', () => {
 
 		registrationDisposable!.dispose();
 
-		assert.strictEqual(service.canHandleResource(resource), false);
+		assert.strictEqual(await service.canHandleResource(resource), false);
+		assert.strictEqual(service.hasProvider(resource), false);
 
 		assert.strictEqual(registrations.length, 2);
 		assert.strictEqual(registrations[1].scheme, 'test');
@@ -120,6 +121,7 @@ suite('File Service', () => {
 		const resource3 = URI.parse('test://foo/bar3');
 		const watcher3Disposable1 = service.watch(resource3);
 		const watcher3Disposable2 = service.watch(resource3, { recursive: true, excludes: [] });
+		const watcher3Disposable3 = service.watch(resource3, { recursive: false, excludes: [], includes: [] });
 
 		await timeout(0); // service.watch() is async
 		assert.strictEqual(disposeCounter, 0);
@@ -127,6 +129,8 @@ suite('File Service', () => {
 		assert.strictEqual(disposeCounter, 1);
 		watcher3Disposable2.dispose();
 		assert.strictEqual(disposeCounter, 2);
+		watcher3Disposable3.dispose();
+		assert.strictEqual(disposeCounter, 3);
 
 		service.dispose();
 	});
@@ -160,7 +164,7 @@ suite('File Service', () => {
 				throw new Error('failed');
 			}
 
-			override open(resource: URI, opts: FileOpenOptions): Promise<number> {
+			override open(resource: URI, opts: IFileOpenOptions): Promise<number> {
 				if (async) {
 					return timeout(5).then(() => { throw new Error('failed'); });
 				}
@@ -168,7 +172,7 @@ suite('File Service', () => {
 				throw new Error('failed');
 			}
 
-			readFileStream(resource: URI, opts: FileReadStreamOptions, token: CancellationToken): ReadableStreamEvents<Uint8Array> {
+			readFileStream(resource: URI, opts: IFileReadStreamOptions, token: CancellationToken): ReadableStreamEvents<Uint8Array> {
 				if (async) {
 					const stream = newWriteableStream<Uint8Array>(chunk => chunk[0]);
 					timeout(5).then(() => stream.error(new Error('failed')));
@@ -208,4 +212,64 @@ suite('File Service', () => {
 
 		disposable.dispose();
 	}
+
+	test('readFile/readFileStream supports cancellation (https://github.com/microsoft/vscode/issues/138805)', async () => {
+		const service = new FileService(new NullLogService());
+
+		let readFileStreamReady: DeferredPromise<void> | undefined = undefined;
+
+		const provider = new class extends NullFileSystemProvider {
+
+			override async stat(resource: URI): Promise<IStat> {
+				return {
+					mtime: Date.now(),
+					ctime: Date.now(),
+					size: 100,
+					type: FileType.File
+				};
+			}
+
+			readFileStream(resource: URI, opts: IFileReadStreamOptions, token: CancellationToken): ReadableStreamEvents<Uint8Array> {
+				const stream = newWriteableStream<Uint8Array>(chunk => chunk[0]);
+				token.onCancellationRequested(() => {
+					stream.error(new Error('Expected cancellation'));
+					stream.end();
+				});
+
+				readFileStreamReady!.complete();
+
+				return stream;
+			}
+		};
+
+		const disposable = service.registerProvider('test', provider);
+
+		provider.setCapabilities(FileSystemProviderCapabilities.FileReadStream);
+
+		let e1;
+		try {
+			const cts = new CancellationTokenSource();
+			readFileStreamReady = new DeferredPromise();
+			const promise = service.readFile(URI.parse('test://foo/bar'), undefined, cts.token);
+			await Promise.all([readFileStreamReady.p.then(() => cts.cancel()), promise]);
+		} catch (error) {
+			e1 = error;
+		}
+
+		assert.ok(e1);
+
+		let e2;
+		try {
+			const cts = new CancellationTokenSource();
+			readFileStreamReady = new DeferredPromise();
+			const stream = await service.readFileStream(URI.parse('test://foo/bar'), undefined, cts.token);
+			await Promise.all([readFileStreamReady.p.then(() => cts.cancel()), consumeStream(stream.value, chunk => chunk[0])]);
+		} catch (error) {
+			e2 = error;
+		}
+
+		assert.ok(e2);
+
+		disposable.dispose();
+	});
 });

@@ -4,14 +4,14 @@
  *--------------------------------------------------------------------------------------------*/
 
 import * as assert from 'assert';
-import { IChannel, IServerChannel, IMessagePassingProtocol, IPCServer, ClientConnectionEvent, IPCClient, ProxyChannel } from 'vs/base/parts/ipc/common/ipc';
-import { Emitter, Event } from 'vs/base/common/event';
-import { CancellationToken, CancellationTokenSource } from 'vs/base/common/cancellation';
-import { canceled } from 'vs/base/common/errors';
 import { timeout } from 'vs/base/common/async';
 import { VSBuffer } from 'vs/base/common/buffer';
-import { URI } from 'vs/base/common/uri';
+import { CancellationToken, CancellationTokenSource } from 'vs/base/common/cancellation';
+import { canceled } from 'vs/base/common/errors';
+import { Emitter, Event } from 'vs/base/common/event';
 import { isEqual } from 'vs/base/common/resources';
+import { URI } from 'vs/base/common/uri';
+import { BufferReader, BufferWriter, ClientConnectionEvent, deserialize, IChannel, IMessagePassingProtocol, IPCClient, IPCServer, IServerChannel, ProxyChannel, serialize } from 'vs/base/parts/ipc/common/ipc';
 
 class QueueProtocol implements IMessagePassingProtocol {
 
@@ -19,7 +19,7 @@ class QueueProtocol implements IMessagePassingProtocol {
 	private buffers: VSBuffer[] = [];
 
 	private readonly _onMessage = new Emitter<VSBuffer>({
-		onFirstListenerDidAdd: () => {
+		onDidAddFirstListener: () => {
 			for (const buffer of this.buffers) {
 				this._onMessage.fire(buffer);
 			}
@@ -27,7 +27,7 @@ class QueueProtocol implements IMessagePassingProtocol {
 			this.buffers = [];
 			this.buffering = false;
 		},
-		onLastListenerRemove: () => {
+		onDidRemoveLastListener: () => {
 			this.buffering = true;
 		}
 	});
@@ -318,6 +318,22 @@ suite('Base IPC', function () {
 		test('buffers in arrays', async function () {
 			const r = await ipcService.buffersLength([VSBuffer.alloc(2), VSBuffer.alloc(3)]);
 			return assert.strictEqual(r, 5);
+		});
+
+		test('round trips numbers', () => {
+			const input = [
+				0,
+				1,
+				-1,
+				12345,
+				-12345,
+				42.6,
+				123412341234
+			];
+
+			const writer = new BufferWriter();
+			serialize(writer, input);
+			assert.deepStrictEqual(deserialize(new BufferReader(writer.buffer)), input);
 		});
 	});
 
