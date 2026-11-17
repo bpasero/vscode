@@ -8,6 +8,11 @@ import { URI } from './uri.js';
 /**
  * A console message that was logged in another process (for example the
  * extension host) and forwarded to be replayed locally.
+ *
+ * The sender serializes the arguments of the `console` call into
+ * {@link IRemoteConsoleLog.arguments} and may append an {@link IStackArgument}
+ * with the stack of the call site. Use {@link parse} to read the arguments back
+ * and {@link log} to replay the message on the local `console`.
  */
 export interface IRemoteConsoleLog {
 	/** Discriminator of the message, typically `__$console`. */
@@ -22,13 +27,17 @@ export interface IRemoteConsoleLog {
  * A special trailing argument of an {@link IRemoteConsoleLog} that carries the stack trace of the call site.
  */
 export interface IStackArgument {
+	/** The stack trace of the call site, as produced by `new Error().stack`. */
 	__$stack: string;
 }
 
 /** A source location parsed out of a stack trace. */
 export interface IStackFrame {
+	/** The file the frame points to. */
 	uri: URI;
+	/** The 1-based line number in {@link uri}. */
 	line: number;
+	/** The 1-based column number in {@link uri}. */
 	column: number;
 }
 

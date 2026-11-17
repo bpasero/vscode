@@ -13,16 +13,33 @@ export interface ErrorListenerUnbind {
 	(): void;
 }
 
-// Avoid circular dependency on EventEmitter by implementing a subset of the interface.
 /**
  * Central place that unexpected errors are reported to. By default an error is
  * rethrown asynchronously so that it surfaces as an uncaught error in the host
  * (for example in the dev tools console), and registered listeners are notified.
+ *
+ * Listeners are kept in a plain array rather than an `Emitter` to avoid a
+ * circular dependency on the event module.
  */
 export class ErrorHandler {
+
+	/**
+	 * The function that every unexpected error is passed to first. It can be
+	 * replaced with {@link setUnexpectedErrorHandler}, for example by tests or by
+	 * hosts that want to route errors to their own logging.
+	 */
 	private unexpectedErrorHandler: (e: any) => void;
+
+	/** Listeners that are notified of every error passed to {@link onUnexpectedError}. */
 	private listeners: ErrorListenerCallback[];
 
+	/**
+	 * Creates a handler whose default behavior is to rethrow each error on a
+	 * `setTimeout` so that it is reported as uncaught without interrupting the
+	 * caller. Errors with a stack are rethrown as a new error whose message
+	 * includes the original stack, and an {@link ErrorNoTelemetry} stays an
+	 * {@link ErrorNoTelemetry} so it is still excluded from telemetry.
+	 */
 	constructor() {
 
 		this.listeners = [];
@@ -44,7 +61,11 @@ export class ErrorHandler {
 
 	/**
 	 * Adds a listener that is called for every error passed to {@link onUnexpectedError}.
-	 * Returns a function that removes the listener again.
+	 * Listeners are not called for errors passed to {@link onUnexpectedExternalError}.
+	 *
+	 * @param listener The function to call with each error, after the unexpected
+	 * error handler has seen it.
+	 * @returns A function that removes the listener again.
 	 */
 	addListener(listener: ErrorListenerCallback): ErrorListenerUnbind {
 		this.listeners.push(listener);
@@ -54,12 +75,14 @@ export class ErrorHandler {
 		};
 	}
 
+	/** Calls every registered listener with `e`, in the order they were added. */
 	private emit(e: any): void {
 		this.listeners.forEach((listener) => {
 			listener(e);
 		});
 	}
 
+	/** Removes `listener` from the registered listeners. */
 	private _removeListener(listener: ErrorListenerCallback): void {
 		this.listeners.splice(this.listeners.indexOf(listener), 1);
 	}
