@@ -5,6 +5,7 @@
 
 import { assert } from './assert.js';
 
+/** Restricts `value` to the inclusive range from `min` to `max`. */
 export function clamp(value: number, min: number, max: number): number {
 	return Math.min(Math.max(value, min), max);
 }
@@ -25,34 +26,48 @@ export function formatTokenCount(count: number): string {
 	return count.toString();
 }
 
+/**
+ * Returns `index` modulo `modulo`, always in the range `[0, modulo)`, also for
+ * negative values of `index`. Useful to wrap around when cycling through a list.
+ */
 export function rot(index: number, modulo: number): number {
 	return (modulo + (index % modulo)) % modulo;
 }
 
+/** Hands out increasing numbers, starting at 0. */
 export class Counter {
 	private _next = 0;
 
+	/** Returns the next number and advances the counter. */
 	getNext(): number {
 		return this._next++;
 	}
 }
 
+/** Computes the running average of all values passed to {@link MovingAverage.update}. */
 export class MovingAverage {
 
 	private _n = 1;
 	private _val = 0;
 
+	/** Adds `value` and returns the new average. */
 	update(value: number): number {
 		this._val = this._val + (value - this._val) / this._n;
 		this._n += 1;
 		return this._val;
 	}
 
+	/** The current average. */
 	get value(): number {
 		return this._val;
 	}
 }
 
+/**
+ * Computes the average of the last `size` values passed to
+ * {@link SlidingWindowAverage.update}. Until `size` values were added, the
+ * average is over the values seen so far.
+ */
 export class SlidingWindowAverage {
 
 	private _n: number = 0;
@@ -67,6 +82,7 @@ export class SlidingWindowAverage {
 		this._values.fill(0, 0, size);
 	}
 
+	/** Adds `value` and returns the new average. */
 	update(value: number): number {
 		const oldValue = this._values[this._index];
 		this._values[this._index] = value;
@@ -83,6 +99,7 @@ export class SlidingWindowAverage {
 		return this._val;
 	}
 
+	/** The current average. */
 	get value(): number {
 		return this._val;
 	}
@@ -115,6 +132,7 @@ export function isPointWithinTriangle(
 	return u >= 0 && v >= 0 && u + v < 1;
 }
 
+/** Returns `true` with probability `p`, which must be between 0 and 1. */
 export function randomChance(p: number): boolean {
 	assert(p >= 0 && p <= 1, 'p must be between 0 and 1');
 	return Math.random() < p;

@@ -6,17 +6,32 @@
 import { mapFilter } from './arrays.js';
 import { IJSONSchema } from './jsonSchema.js';
 
+/**
+ * A validator checks that an unknown value has the shape `T` and can describe
+ * that shape as a JSON schema.
+ */
 export interface IValidator<T> {
+	/**
+	 * Validates `content`. On success the result carries the typed content,
+	 * otherwise it carries a {@link ValidationError} describing the first problem found.
+	 */
 	validate(content: unknown): { content: T; error: undefined } | { content: undefined; error: ValidationError };
 
+	/** Returns a JSON schema that describes the values accepted by this validator. */
 	getJSONSchema(): IJSONSchema;
 }
 
+/** Base class for validators that adds convenience helpers on top of {@link IValidator}. */
 export abstract class ValidatorBase<T> implements IValidator<T> {
 	abstract validate(content: unknown): { content: T; error: undefined } | { content: undefined; error: ValidationError };
 
 	abstract getJSONSchema(): IJSONSchema;
 
+	/**
+	 * Validates `content` and returns it typed as `T`.
+	 *
+	 * @throws Error with the validation message if `content` is invalid.
+	 */
 	validateOrThrow(content: unknown): T {
 		const result = this.validate(content);
 		if (result.error) {
@@ -26,8 +41,10 @@ export abstract class ValidatorBase<T> implements IValidator<T> {
 	}
 }
 
+/** Extracts the validated type `U` from a validator type `IValidator<U>`. */
 export type ValidatorType<T> = T extends IValidator<infer U> ? U : never;
 
+/** Describes why a value failed validation. */
 export interface ValidationError {
 	message: string;
 }
@@ -59,15 +76,19 @@ class TypeofValidator<TKey extends keyof TypeOfMap> extends ValidatorBase<TypeOf
 }
 
 const vStringValidator = new TypeofValidator('string');
+/** Returns a validator that accepts any string. */
 export function vString(): ValidatorBase<string> { return vStringValidator; }
 
 const vNumberValidator = new TypeofValidator('number');
+/** Returns a validator that accepts any number. */
 export function vNumber(): ValidatorBase<number> { return vNumberValidator; }
 
 const vBooleanValidator = new TypeofValidator('boolean');
+/** Returns a validator that accepts any boolean. */
 export function vBoolean(): ValidatorBase<boolean> { return vBooleanValidator; }
 
 const vObjAnyValidator = new TypeofValidator('object');
+/** Returns a validator that accepts any value whose `typeof` is `object`, including `null`. */
 export function vObjAny(): ValidatorBase<object> { return vObjAnyValidator; }
 
 
@@ -81,6 +102,7 @@ class UncheckedValidator<T> extends ValidatorBase<T> {
 	}
 }
 
+/** Returns a validator that accepts every value without checking it and types it as `T`. */
 export function vUnchecked<T>(): ValidatorBase<T> {
 	return new UncheckedValidator<T>();
 }
@@ -99,20 +121,27 @@ class UndefinedValidator extends ValidatorBase<undefined> {
 	}
 }
 
+/** Returns a validator that only accepts `undefined`. */
 export function vUndefined(): ValidatorBase<undefined> {
 	return new UndefinedValidator();
 }
 
+/** Returns a validator that accepts every value and types it as `unknown`. */
 export function vUnknown(): ValidatorBase<unknown> {
 	return vUnchecked();
 }
 
+/** A loose map of property names to values. */
 export type ObjectProperties = Record<string, unknown>;
 
+/**
+ * Marks a property validator passed to {@link vObj} as optional. Create one with {@link vOptionalProp}.
+ */
 export class Optional<T extends IValidator<unknown>> {
 	constructor(public readonly validator: T) { }
 }
 
+/** Wraps `validator` so that the property it describes may be missing (`undefined`) in {@link vObj}. */
 export function vOptionalProp<T>(validator: IValidator<T>): Optional<IValidator<T>> {
 	return new Optional(validator);
 }
@@ -125,6 +154,10 @@ type ExtractRequiredKeys<T> = {
 	[K in keyof T]: T[K] extends Optional<IValidator<unknown>> ? never : K;
 }[keyof T];
 
+/**
+ * The object type produced by {@link vObj} for a map of property validators.
+ * Properties wrapped in {@link Optional} become optional properties.
+ */
 export type vObjType<T extends Record<string, IValidator<unknown> | Optional<IValidator<unknown>>>> = {
 	[K in ExtractRequiredKeys<T>]: T[K] extends IValidator<infer U> ? U : never;
 } & {
@@ -192,6 +225,10 @@ class ObjValidator<T extends Record<string, IValidator<unknown> | Optional<IVali
 	}
 }
 
+/**
+ * Returns a validator for objects with the given properties. Only the listed
+ * properties are copied into the result; unknown properties are dropped.
+ */
 export function vObj<T extends Record<string, IValidator<unknown> | Optional<IValidator<unknown>>>>(properties: T): ValidatorBase<vObjType<T>> {
 	return new ObjValidator(properties);
 }
@@ -227,6 +264,7 @@ class ArrayValidator<T> extends ValidatorBase<T[]> {
 	}
 }
 
+/** Returns a validator for arrays whose elements all pass `validator`. */
 export function vArray<T>(validator: IValidator<T>): ValidatorBase<T[]> {
 	return new ArrayValidator(validator);
 }
@@ -268,6 +306,10 @@ class TupleValidator<T extends IValidator<unknown>[]> extends ValidatorBase<vTup
 	}
 }
 
+/**
+ * Returns a validator for fixed length arrays where each position is checked by
+ * the validator at the same index.
+ */
 export function vTuple<T extends IValidator<unknown>[]>(...validators: T): ValidatorBase<vTupleType<T>> {
 	return new TupleValidator(validators);
 }
@@ -304,6 +346,10 @@ class UnionValidator<T extends IValidator<unknown>[]> extends ValidatorBase<Vali
 	}
 }
 
+/**
+ * Returns a validator that accepts a value if any of `validators` accepts it.
+ * The first matching validator wins. If none match, the error of the last one is reported.
+ */
 export function vUnion<T extends IValidator<unknown>[]>(...validators: T): ValidatorBase<ValidatorType<T[number]>> {
 	return new UnionValidator(validators);
 }
@@ -328,6 +374,7 @@ class EnumValidator<T extends string[]> extends ValidatorBase<T[number]> {
 	}
 }
 
+/** Returns a validator that only accepts one of the given string values. */
 export function vEnum<T extends string[]>(...values: T): ValidatorBase<T[number]> {
 	return new EnumValidator(values);
 }
@@ -352,6 +399,7 @@ class LiteralValidator<T extends string> extends ValidatorBase<T> {
 	}
 }
 
+/** Returns a validator that only accepts exactly `value`. */
 export function vLiteral<T extends string>(value: T): ValidatorBase<T> {
 	return new LiteralValidator(value);
 }
@@ -370,6 +418,10 @@ class LazyValidator<T> extends ValidatorBase<T> {
 	}
 }
 
+/**
+ * Returns a validator that defers to the validator returned by `fn`. Useful for
+ * recursive schemas where a validator needs to reference itself.
+ */
 export function vLazy<T>(fn: () => IValidator<T>): ValidatorBase<T> {
 	return new LazyValidator(fn);
 }
@@ -391,6 +443,10 @@ class UseRefSchemaValidator<T> extends ValidatorBase<T> {
 	}
 }
 
+/**
+ * Returns a validator that validates with `validator` but describes its schema
+ * as a `$ref` to `ref` instead of inlining it.
+ */
 export function vWithJsonSchemaRef<T>(ref: string, validator: IValidator<T>): ValidatorBase<T> {
 	return new UseRefSchemaValidator(ref, validator);
 }

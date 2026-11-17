@@ -5,6 +5,7 @@
 
 import { extname } from './path.js';
 
+/** Well known mime types used across the code base. */
 export const Mimes = Object.freeze({
 	text: 'text/plain',
 	binary: 'application/octet-stream',
@@ -92,6 +93,10 @@ const mapExtToMediaMimes: MapExtToMediaMimes = {
 	'.woff2': 'font/woff2',
 };
 
+/**
+ * Returns the mime type for the file extension of `path`, checking known text
+ * types first and then known media types. Returns `undefined` for unknown extensions.
+ */
 export function getMediaOrTextMime(path: string): string | undefined {
 	const ext = extname(path);
 	const textMime = mapExtToTextMimes[ext.toLowerCase()];
@@ -102,12 +107,20 @@ export function getMediaOrTextMime(path: string): string | undefined {
 	}
 }
 
+/**
+ * Returns the mime type for the file extension of `path` if it is a known media
+ * type (image, audio, video, font, ...). Returns `undefined` otherwise.
+ */
 export function getMediaMime(path: string): string | undefined {
 	const ext = extname(path);
 	const mimeType = mapExtToMediaMimes[ext.toLowerCase()];
 	return Array.isArray(mimeType) ? mimeType[0] : mimeType;
 }
 
+/**
+ * Returns the first known file extension (including the leading dot) that maps
+ * to `mimeType`, or `undefined` if there is none.
+ */
 export function getExtensionForMimeType(mimeType: string): string | undefined {
 	for (const mapping of [mapExtToTextMimes, mapExtToMediaMimes]) {
 		for (const extension in mapping) {
@@ -123,6 +136,13 @@ export function getExtensionForMimeType(mimeType: string): string | undefined {
 
 const _simplePattern = /^(.+)\/(.+?)(;.+)?$/;
 
+/**
+ * Lower cases the type and subtype of `mimeType` while keeping any parameters
+ * (such as `;charset=UTF-8`) as they are.
+ *
+ * If `mimeType` is not of the form `type/subtype`, it is returned unchanged, or
+ * `undefined` is returned when `strict` is set.
+ */
 export function normalizeMimeType(mimeType: string): string;
 export function normalizeMimeType(mimeType: string, strict: true): string | undefined;
 export function normalizeMimeType(mimeType: string, strict?: true): string | undefined {

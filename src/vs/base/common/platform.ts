@@ -5,6 +5,7 @@
 
 import * as nls from '../../nls.js';
 
+/** The language that is used when no other UI language is configured. */
 export const LANGUAGE_DEFAULT = 'en';
 
 let _isWindows = false;
@@ -25,6 +26,7 @@ let _regionalLocale: string = LANGUAGE_DEFAULT;
 let _translationsConfigFile: string | undefined = undefined;
 let _userAgent: string | undefined = undefined;
 
+/** A map of environment variable names to values, like `process.env`. */
 export interface IProcessEnvironment {
 	[key: string]: string | undefined;
 }
@@ -118,14 +120,17 @@ else {
 	console.error('Unable to resolve platform.');
 }
 
+/** The platform that the code runs on. `Web` is used when the operating system is unknown. */
 export const enum Platform {
 	Web,
 	Mac,
 	Linux,
 	Windows
 }
+/** The display name of a {@link Platform}. */
 export type PlatformName = 'Web' | 'Windows' | 'Mac' | 'Linux';
 
+/** Returns the display name of `platform`. */
 export function PlatformToString(platform: Platform): PlatformName {
 	switch (platform) {
 		case Platform.Web: return 'Web';
@@ -144,24 +149,42 @@ if (_isMacintosh) {
 	_platform = Platform.Linux;
 }
 
+/** Whether the code runs on Windows, natively or in a browser on Windows. */
 export const isWindows = _isWindows;
+/**
+ * Whether the code runs on macOS, natively or in a browser on macOS. Also `true` on iPadOS in a browser.
+ */
 export const isMacintosh = _isMacintosh;
+/** Whether the code runs on Linux, natively or in a browser on Linux. */
 export const isLinux = _isLinux;
+/** Whether the code runs natively on Linux from a snap package. */
 export const isLinuxSnap = _isLinuxSnap;
+/** Whether the code runs in a browser on ChromeOS. */
 export const isChromeOS = _isChromeOS;
+/**
+ * Whether the code runs in a Node.js or Electron process with a `process` object, as opposed to a browser.
+ */
 export const isNative = _isNative;
+/** Whether the code runs in an Electron process. */
 export const isElectron = _isElectron;
+/** Whether the code runs in a browser, as opposed to Node.js or Electron. */
 export const isWeb = _isWeb;
+/** Whether the code runs in a web worker in a browser. */
 export const isWebWorker = (_isWeb && typeof $globalThis.importScripts === 'function');
+/** The origin of the web worker, if {@link isWebWorker} is `true`. */
 export const webWorkerOrigin = isWebWorker ? $globalThis.origin : undefined;
+/** Whether the code runs in a browser on an iOS or iPadOS device with a touch screen. */
 export const isIOS = _isIOS;
+/** Whether the code runs in a mobile browser. */
 export const isMobile = _isMobile;
 /**
  * Whether we run inside a CI environment, such as
  * GH actions or Azure Pipelines.
  */
 export const isCI = _isCI;
+/** The {@link Platform} that the code runs on. */
 export const platform = _platform;
+/** The browser user agent string. `undefined` outside of a browser. */
 export const userAgent = _userAgent;
 
 /**
@@ -171,12 +194,15 @@ export const userAgent = _userAgent;
  */
 export const language = _language;
 
+/** Helpers to inspect the UI {@link language}. */
 export namespace Language {
 
+	/** Returns the UI language. */
 	export function value(): string {
 		return language;
 	}
 
+	/** Returns whether the UI language is English or a regional variant of it, such as `en-us`. */
 	export function isDefaultVariant(): boolean {
 		if (language.length === 2) {
 			return language === 'en';
@@ -187,6 +213,7 @@ export namespace Language {
 		}
 	}
 
+	/** Returns whether the UI language is exactly `en`. */
 	export function isDefault(): boolean {
 		return language === 'en';
 	}
@@ -217,6 +244,9 @@ export const regionalLocale = _regionalLocale;
  */
 export const translationsConfigFile = _translationsConfigFile;
 
+/**
+ * Whether {@link setTimeout0} uses `postMessage`, which avoids the minimum delay of nested `setTimeout` calls.
+ */
 export const setTimeout0IsFaster = (typeof $globalThis.postMessage === 'function' && !$globalThis.importScripts);
 
 /**
@@ -258,15 +288,24 @@ export const setTimeout0 = (() => {
 	return (callback: () => void) => setTimeout(callback);
 })();
 
+/** The operating system family, used for example to pick keybindings and path conventions. */
 export const enum OperatingSystem {
 	Windows = 1,
 	Macintosh = 2,
 	Linux = 3
 }
+/**
+ * The {@link OperatingSystem} that the code runs on. iOS counts as macOS and
+ * an unknown system counts as Linux.
+ */
 export const OS = (_isMacintosh || _isIOS ? OperatingSystem.Macintosh : (_isWindows ? OperatingSystem.Windows : OperatingSystem.Linux));
 
 let _isLittleEndian = true;
 let _isLittleEndianComputed = false;
+/**
+ * Returns whether the machine stores numbers in little endian byte order. The
+ * result is computed once and cached.
+ */
 export function isLittleEndian(): boolean {
 	if (!_isLittleEndianComputed) {
 		_isLittleEndianComputed = true;
@@ -279,13 +318,22 @@ export function isLittleEndian(): boolean {
 	return _isLittleEndian;
 }
 
+/** Whether the user agent is Chrome or based on Chromium (including Edge and Electron). */
 export const isChrome = !!(userAgent && userAgent.indexOf('Chrome') >= 0);
+/** Whether the user agent is Firefox. */
 export const isFirefox = !!(userAgent && userAgent.indexOf('Firefox') >= 0);
+/** Whether the user agent is Safari. */
 export const isSafari = !!(!isChrome && (userAgent && userAgent.indexOf('Safari') >= 0));
+/** Whether the user agent is the Chromium based Microsoft Edge. */
 export const isEdge = !!(userAgent && userAgent.indexOf('Edg/') >= 0);
+/** Whether the user agent is an Android device. */
 export const isAndroid = !!(userAgent && userAgent.indexOf('Android') >= 0);
+/** Whether the user agent contains `Electron`. */
 export const hasElectronUserAgent = !!(userAgent && userAgent.indexOf('Electron') >= 0);
 
+/**
+ * Returns whether the given Darwin kernel version (for example `25.0.0`) belongs to macOS 26 Tahoe or newer.
+ */
 export function isTahoeOrNewer(osVersion: string): boolean {
 	return parseFloat(osVersion) >= 25;
 }

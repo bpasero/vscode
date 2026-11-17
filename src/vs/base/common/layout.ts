@@ -5,6 +5,7 @@
 
 import { Range } from './range.js';
 
+/** A point or box that a floating element, such as a context menu, is placed against. */
 export interface IAnchor {
 	x: number;
 	y: number;
@@ -12,14 +13,17 @@ export interface IAnchor {
 	height?: number;
 }
 
+/** Horizontal edge of the anchor that the view aligns to. */
 export const enum AnchorAlignment {
 	LEFT, RIGHT
 }
 
+/** Whether the view is placed below or above the anchor. */
 export const enum AnchorPosition {
 	BELOW, ABOVE
 }
 
+/** The axis along which the view is placed next to the anchor first. */
 export const enum AnchorAxisAlignment {
 	VERTICAL, HORIZONTAL
 }
@@ -34,18 +38,29 @@ interface ISize {
 	readonly height: number;
 }
 
+/** A rectangle described by its top left corner and its size. */
 export interface IRect extends IPosition, ISize { }
 
+/**
+ * Preferred side of a one dimensional anchor. `Before` places the view after
+ * the anchor's start (below or right of it), `After` places it before (above
+ * or left of it).
+ */
 export const enum LayoutAnchorPosition {
 	Before,
 	After
 }
 
+/**
+ * How the view relates to the anchor. `AVOID` places the view next to the
+ * anchor without covering it, `ALIGN` lines up the view with an edge of the anchor.
+ */
 export enum LayoutAnchorMode {
 	AVOID,
 	ALIGN
 }
 
+/** A one dimensional anchor used by {@link layout}. */
 export interface ILayoutAnchor {
 	offset: number;
 	size: number;
@@ -53,6 +68,11 @@ export interface ILayoutAnchor {
 	position: LayoutAnchorPosition;
 }
 
+/**
+ * The result of {@link layout}. `result` tells whether the view could be placed
+ * on the preferred side (`ok`), had to move to the other side (`flipped`), or
+ * fits on neither side and overlaps the anchor (`overlap`).
+ */
 export interface ILayoutResult {
 	position: number;
 	result: 'ok' | 'flipped' | 'overlap';
@@ -96,6 +116,10 @@ interface ILayout2DOptions {
 	readonly anchorAxisAlignment?: AnchorAxisAlignment; // default: vertical
 }
 
+/**
+ * The result of {@link layout2d}: the view's distance from each edge of the
+ * viewport, and the alignment and position that were actually used after any flips.
+ */
 export interface ILayout2DResult {
 	top: number;
 	left: number;
@@ -105,6 +129,10 @@ export interface ILayout2DResult {
 	anchorPosition: AnchorPosition;
 }
 
+/**
+ * Lays out a view next to an anchor in a two dimensional viewport, flipping the
+ * view to the other side of the anchor on either axis when it does not fit.
+ */
 export function layout2d(viewport: IRect, view: ISize, anchor: IRect, options?: ILayout2DOptions): ILayout2DResult {
 	let anchorAlignment = options?.anchorAlignment ?? AnchorAlignment.LEFT;
 	let anchorPosition = options?.anchorPosition ?? AnchorPosition.BELOW;
