@@ -3,19 +3,43 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+/** A listener that is told about unexpected errors, see {@link ErrorHandler.addListener}. */
 export interface ErrorListenerCallback {
 	(error: any): void;
 }
 
+/** Removes a listener that was added with {@link ErrorHandler.addListener}. */
 export interface ErrorListenerUnbind {
 	(): void;
 }
 
-// Avoid circular dependency on EventEmitter by implementing a subset of the interface.
+/**
+ * Central place that unexpected errors are reported to. By default an error is
+ * rethrown asynchronously so that it surfaces as an uncaught error in the host
+ * (for example in the dev tools console), and registered listeners are notified.
+ *
+ * Listeners are kept in a plain array rather than an `Emitter` to avoid a
+ * circular dependency on the event module.
+ */
 export class ErrorHandler {
+
+	/**
+	 * The function that every unexpected error is passed to first. It can be
+	 * replaced with {@link setUnexpectedErrorHandler}, for example by tests or by
+	 * hosts that want to route errors to their own logging.
+	 */
 	private unexpectedErrorHandler: (e: any) => void;
+
+	/** Listeners that are notified of every error passed to {@link onUnexpectedError}. */
 	private listeners: ErrorListenerCallback[];
 
+	/**
+	 * Creates a handler whose default behavior is to rethrow each error on a
+	 * `setTimeout` so that it is reported as uncaught without interrupting the
+	 * caller. Errors with a stack are rethrown as a new error whose message
+	 * includes the original stack, and an {@link ErrorNoTelemetry} stays an
+	 * {@link ErrorNoTelemetry} so it is still excluded from telemetry.
+	 */
 	constructor() {
 
 		this.listeners = [];
@@ -35,6 +59,14 @@ export class ErrorHandler {
 		};
 	}
 
+	/**
+	 * Adds a listener that is called for every error passed to {@link onUnexpectedError}.
+	 * Listeners are not called for errors passed to {@link onUnexpectedExternalError}.
+	 *
+	 * @param listener The function to call with each error, after the unexpected
+	 * error handler has seen it.
+	 * @returns A function that removes the listener again.
+	 */
 	addListener(listener: ErrorListenerCallback): ErrorListenerUnbind {
 		this.listeners.push(listener);
 
@@ -43,35 +75,45 @@ export class ErrorHandler {
 		};
 	}
 
+	/** Calls every registered listener with `e`, in the order they were added. */
 	private emit(e: any): void {
 		this.listeners.forEach((listener) => {
 			listener(e);
 		});
 	}
 
+	/** Removes `listener` from the registered listeners. */
 	private _removeListener(listener: ErrorListenerCallback): void {
 		this.listeners.splice(this.listeners.indexOf(listener), 1);
 	}
 
+	/** Replaces the function that is called for every unexpected error. */
 	setUnexpectedErrorHandler(newUnexpectedErrorHandler: (e: any) => void): void {
 		this.unexpectedErrorHandler = newUnexpectedErrorHandler;
 	}
 
+	/** Returns the function that is currently called for every unexpected error. */
 	getUnexpectedErrorHandler(): (e: any) => void {
 		return this.unexpectedErrorHandler;
 	}
 
+	/** Reports an unexpected error to the handler and to all listeners. */
 	onUnexpectedError(e: any): void {
 		this.unexpectedErrorHandler(e);
 		this.emit(e);
 	}
 
 	// For external errors, we don't want the listeners to be called
+	/**
+	 * Reports an unexpected error that was caused outside of our code, for example
+	 * by an extension. Only the handler is called, listeners are not notified.
+	 */
 	onUnexpectedExternalError(e: any): void {
 		this.unexpectedErrorHandler(e);
 	}
 }
 
+/** The global {@link ErrorHandler} instance. */
 export const errorHandler = new ErrorHandler();
 
 /** @skipMangle */
@@ -104,6 +146,11 @@ export function onBugIndicatingError(e: any): undefined {
 	return undefined;
 }
 
+/**
+ * Reports an unexpected error to the global {@link errorHandler}.
+ * Cancellation errors are ignored. Returns `undefined` so that it can be used
+ * as the body of a `catch` callback.
+ */
 export function onUnexpectedError(e: any): undefined {
 	// ignore errors from cancelled promises
 	if (!isCancellationError(e)) {
@@ -112,6 +159,10 @@ export function onUnexpectedError(e: any): undefined {
 	return undefined;
 }
 
+/**
+ * Like {@link onUnexpectedError}, but for errors caused outside of our code,
+ * for example by an extension. Listeners of the global handler are not notified.
+ */
 export function onUnexpectedExternalError(e: any): undefined {
 	// ignore errors from cancelled promises
 	if (!isCancellationError(e)) {
@@ -128,6 +179,10 @@ function hasErrorCode(error: object): error is ObjectWithCode {
 	return Object.hasOwn(error, 'code');
 }
 
+/**
+ * Returns the `code` property of `error` as a string if it is a string or a
+ * number, as set for example by Node.js system errors (`ENOENT`).
+ */
 export function getErrorCode(error: unknown): string | undefined {
 	if (!error || typeof error !== 'object' || !hasErrorCode(error)) {
 		return undefined;
@@ -136,6 +191,11 @@ export function getErrorCode(error: unknown): string | undefined {
 	return typeof code === 'string' || typeof code === 'number' ? String(code) : undefined;
 }
 
+/**
+ * A plain object form of an {@link Error} that can be sent across process
+ * boundaries. Create it with {@link transformErrorForSerialization} and turn it
+ * back into an error with {@link transformErrorFromSerialization}.
+ */
 export interface SerializedError {
 	readonly $isError: true;
 	readonly name: string;
@@ -150,6 +210,10 @@ type ErrorWithCode = Error & {
 	code: string | undefined;
 };
 
+/**
+ * Converts an {@link Error} (including its `cause` chain) into a
+ * {@link SerializedError}. Values that are not errors are returned unchanged.
+ */
 export function transformErrorForSerialization(error: Error): SerializedError;
 export function transformErrorForSerialization(error: any): any;
 export function transformErrorForSerialization(error: any): any {
@@ -172,6 +236,10 @@ export function transformErrorForSerialization(error: any): any {
 	return error;
 }
 
+/**
+ * Recreates an {@link Error} from a {@link SerializedError}. Errors that were
+ * marked as {@link ErrorNoTelemetry} are restored as such.
+ */
 export function transformErrorFromSerialization(data: SerializedError): Error {
 	let error: Error;
 	if (data.noTelemetry) {
@@ -192,6 +260,7 @@ export function transformErrorFromSerialization(data: SerializedError): Error {
 }
 
 // see https://github.com/v8/v8/wiki/Stack%20Trace%20API#basic-stack-traces
+/** A call site of a V8 stack trace, as passed to `Error.prepareStackTrace`. */
 export interface V8CallSite {
 	getThis(): unknown;
 	getTypeName(): string | null;
@@ -209,6 +278,7 @@ export interface V8CallSite {
 	toString(): string;
 }
 
+/** The `name` and `message` of a {@link CancellationError}. */
 export const canceledName = 'Canceled';
 
 /**
@@ -223,6 +293,10 @@ export function isCancellationError(error: any): boolean {
 
 // !!!IMPORTANT!!!
 // Do NOT change this class because it is also used as an API-type.
+/**
+ * The error that is used to reject an operation that was cancelled.
+ * Use {@link isCancellationError} to check for it.
+ */
 export class CancellationError extends Error {
 	constructor() {
 		super(canceledName);
@@ -230,6 +304,11 @@ export class CancellationError extends Error {
 	}
 }
 
+/**
+ * An error indicating that an operation cannot proceed until a pending
+ * migration has completed. Use {@link PendingMigrationError.is} to check for it,
+ * also for errors that were serialized and revived.
+ */
 export class PendingMigrationError extends Error {
 
 	private static readonly _name = 'PendingMigrationError';
@@ -253,6 +332,7 @@ export function canceled(): Error {
 	return error;
 }
 
+/** Creates an error for an invalid argument, optionally naming the argument. */
 export function illegalArgument(name?: string): Error {
 	if (name) {
 		return new Error(`Illegal argument: ${name}`);
@@ -261,6 +341,7 @@ export function illegalArgument(name?: string): Error {
 	}
 }
 
+/** Creates an error for an operation that was called in an invalid state. */
 export function illegalState(name?: string): Error {
 	if (name) {
 		return new Error(`Illegal state: ${name}`);
@@ -269,12 +350,17 @@ export function illegalState(name?: string): Error {
 	}
 }
 
+/** A type error for an attempt to change a read only value. */
 export class ReadonlyError extends TypeError {
 	constructor(name?: string) {
 		super(name ? `${name} is read-only and cannot be changed` : 'Cannot change read-only property');
 	}
 }
 
+/**
+ * Returns a human readable message for `err`: its `message`, else the first
+ * line of its stack, else its string form.
+ */
 export function getErrorMessage(err: any): string {
 	if (!err) {
 		return 'Error';
@@ -291,6 +377,7 @@ export function getErrorMessage(err: any): string {
 	return String(err);
 }
 
+/** Thrown by code that is not implemented yet. */
 export class NotImplementedError extends Error {
 	constructor(message?: string) {
 		super('NotImplemented');
@@ -300,6 +387,7 @@ export class NotImplementedError extends Error {
 	}
 }
 
+/** Thrown when an operation is not supported, for example on the current platform. */
 export class NotSupportedError extends Error {
 	constructor(message?: string) {
 		super('NotSupported');
@@ -309,6 +397,7 @@ export class NotSupportedError extends Error {
 	}
 }
 
+/** An error that is part of normal operation and does not indicate a bug. */
 export class ExpectedError extends Error {
 	readonly isExpected = true;
 }

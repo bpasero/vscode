@@ -9,6 +9,7 @@ import { isWindows } from './platform.js';
 import { equalsIgnoreCase, rtrim, startsWithIgnoreCase } from './strings.js';
 import { isNumber } from './types.js';
 
+/** Returns whether the character code is a forward or backward slash. */
 export function isPathSeparator(code: number) {
 	return code === CharCode.Slash || code === CharCode.Backslash;
 }
@@ -166,6 +167,11 @@ export function isUNC(path: string): boolean {
 const WINDOWS_INVALID_FILE_CHARS = /[\\/:\*\?"<>\|]/g;
 const UNIX_INVALID_FILE_CHARS = /[/]/g;
 const WINDOWS_FORBIDDEN_NAMES = /^(con|prn|aux|clock\$|nul|lpt[0-9]|com[0-9])(\.(.*?))?$/i;
+/**
+ * Returns whether `name` can be used as a file or folder name, checking for
+ * characters and names that are reserved on Windows or on Unix depending on
+ * `isWindowsOS`, and for names longer than 255 characters.
+ */
 export function isValidBasename(name: string | null | undefined, isWindowsOS: boolean = isWindows): boolean {
 	const invalidFileChars = isWindowsOS ? WINDOWS_INVALID_FILE_CHARS : UNIX_INVALID_FILE_CHARS;
 
@@ -272,10 +278,15 @@ export function isEqualOrParent(base: string, parentCandidate: string, ignoreCas
 	return base.indexOf(parentCandidate) === 0;
 }
 
+/** Returns whether the character code is an ASCII letter, as used for Windows drive letters. */
 export function isWindowsDriveLetter(char0: number): boolean {
 	return char0 >= CharCode.A && char0 <= CharCode.Z || char0 >= CharCode.a && char0 <= CharCode.z;
 }
 
+/**
+ * Turns `candidate` into a normalized absolute path without a trailing
+ * separator, resolving relative paths against `cwd`.
+ */
 export function sanitizeFilePath(candidate: string, cwd: string): string {
 
 	// Special case: allow to open a drive letter without trailing backslash
@@ -295,6 +306,10 @@ export function sanitizeFilePath(candidate: string, cwd: string): string {
 	return removeTrailingPathSeparator(candidate);
 }
 
+/**
+ * Removes trailing path separators from `candidate`, but keeps the separator of
+ * a root path such as `/` or `C:\`.
+ */
 export function removeTrailingPathSeparator(candidate: string): string {
 	if (isWindows) {
 		candidate = rtrim(candidate, sep);
@@ -316,6 +331,7 @@ export function removeTrailingPathSeparator(candidate: string): string {
 	return candidate;
 }
 
+/** Returns whether `path` is the file system root, or on Windows a drive such as `C:` or `C:\`. */
 export function isRootOrDriveLetter(path: string): boolean {
 	const pathNormalized = normalize(path);
 
@@ -331,6 +347,10 @@ export function isRootOrDriveLetter(path: string): boolean {
 	return pathNormalized === posix.sep;
 }
 
+/**
+ * Returns whether `path` starts with a Windows drive letter followed by a colon.
+ * Always `false` when `isWindowsOS` is `false`.
+ */
 export function hasDriveLetter(path: string, isWindowsOS: boolean = isWindows): boolean {
 	if (isWindowsOS) {
 		return isWindowsDriveLetter(path.charCodeAt(0)) && path.charCodeAt(1) === CharCode.Colon;
@@ -339,10 +359,12 @@ export function hasDriveLetter(path: string, isWindowsOS: boolean = isWindows): 
 	return false;
 }
 
+/** Returns the drive letter of `path` if it has one, see {@link hasDriveLetter}. */
 export function getDriveLetter(path: string, isWindowsOS: boolean = isWindows): string | undefined {
 	return hasDriveLetter(path, isWindowsOS) ? path[0] : undefined;
 }
 
+/** Returns the index of `candidate` in `path`, optionally ignoring case, or -1 if it is not found. */
 export function indexOfPath(path: string, candidate: string, ignoreCase?: boolean): number {
 	if (candidate.length > path.length) {
 		return -1;
@@ -360,12 +382,20 @@ export function indexOfPath(path: string, candidate: string, ignoreCase?: boolea
 	return path.indexOf(candidate);
 }
 
+/** A path with an optional line and column, as parsed by {@link parseLineAndColumnAware}. */
 export interface IPathWithLineAndColumn {
 	path: string;
 	line?: number;
 	column?: number;
 }
 
+/**
+ * Parses a path of the form `FILE:LINE:COLUMN`, as accepted by the `--goto`
+ * command line argument. Colons that are part of the path (such as in `C:\`)
+ * are kept. If a line is given without a column, the column defaults to 1.
+ *
+ * @throws Error if no path could be found in `rawPath`.
+ */
 export function parseLineAndColumnAware(rawPath: string): IPathWithLineAndColumn {
 	const segments = rawPath.split(':'); // C:\file.txt:<line>:<column>
 
@@ -398,6 +428,11 @@ export function parseLineAndColumnAware(rawPath: string): IPathWithLineAndColumn
 const pathChars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
 const windowsSafePathFirstChars = 'BDEFGHIJKMOQRSTUVWXYZbdefghijkmoqrstuvwxyz0123456789';
 
+/**
+ * Returns a random file name of `randomLength` characters, optionally prefixed
+ * with `prefix-` and joined to `parent`. On Windows the name avoids reserved
+ * device names such as `AUX` or `CON`.
+ */
 export function randomPath(parent?: string, prefix?: string, randomLength = 8): string {
 	let suffix = '';
 	for (let i = 0; i < randomLength; i++) {

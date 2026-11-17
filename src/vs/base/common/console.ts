@@ -5,28 +5,54 @@
 
 import { URI } from './uri.js';
 
+/**
+ * A console message that was logged in another process (for example the
+ * extension host) and forwarded to be replayed locally.
+ *
+ * The sender serializes the arguments of the `console` call into
+ * {@link IRemoteConsoleLog.arguments} and may append an {@link IStackArgument}
+ * with the stack of the call site. Use {@link parse} to read the arguments back
+ * and {@link log} to replay the message on the local `console`.
+ */
 export interface IRemoteConsoleLog {
+	/** Discriminator of the message, typically `__$console`. */
 	type: string;
+	/** Name of the `console` method to call, such as `log`, `warn` or `error`. */
 	severity: string;
+	/** The JSON serialized array of arguments. The last element may be an {@link IStackArgument}. */
 	arguments: string;
 }
 
+/**
+ * A special trailing argument of an {@link IRemoteConsoleLog} that carries the stack trace of the call site.
+ */
 export interface IStackArgument {
+	/** The stack trace of the call site, as produced by `new Error().stack`. */
 	__$stack: string;
 }
 
+/** A source location parsed out of a stack trace. */
 export interface IStackFrame {
+	/** The file the frame points to. */
 	uri: URI;
+	/** The 1-based line number in {@link uri}. */
 	line: number;
+	/** The 1-based column number in {@link uri}. */
 	column: number;
 }
 
+/** Returns whether `obj` looks like an {@link IRemoteConsoleLog}. */
 export function isRemoteConsoleLog(obj: unknown): obj is IRemoteConsoleLog {
 	const entry = obj as IRemoteConsoleLog;
 
 	return entry && typeof entry.type === 'string' && typeof entry.severity === 'string';
 }
 
+/**
+ * Deserializes the arguments of a remote console message and splits off the
+ * stack trace, if present. Arguments that cannot be parsed are replaced with an
+ * explanatory message.
+ */
 export function parse(entry: IRemoteConsoleLog): { args: any[]; stack?: string } {
 	const args: any[] = [];
 	let stack: string | undefined;
@@ -50,6 +76,11 @@ export function parse(entry: IRemoteConsoleLog): { args: any[]; stack?: string }
 	return { args, stack };
 }
 
+/**
+ * Returns the source location of the top frame of the stack trace of a remote
+ * console message, or of a raw stack string. Returns `undefined` if no location
+ * could be parsed.
+ */
 export function getFirstFrame(entry: IRemoteConsoleLog): IStackFrame | undefined;
 export function getFirstFrame(stack: string | undefined): IStackFrame | undefined;
 export function getFirstFrame(arg0: IRemoteConsoleLog | string | undefined): IStackFrame | undefined {
@@ -99,6 +130,12 @@ function findFirstFrame(stack: string | undefined): string | undefined {
 	return stack.substring(0, newlineIndex);
 }
 
+/**
+ * Replays a remote console message on the local `console`, prefixed with
+ * `label` and styled for the browser dev tools.
+ *
+ * @throws Error if `entry.severity` is not a known `console` method.
+ */
 export function log(entry: IRemoteConsoleLog, label: string): void {
 	const { args, stack } = parse(entry);
 
