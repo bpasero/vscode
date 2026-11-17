@@ -277,6 +277,29 @@ export class AnythingQuickAccessProvider extends PickerQuickAccessProvider<IAnyt
 		return disposables;
 	}
 
+	private decorateAndRevealSymbolRange(pick: IEditorSymbolAnythingQuickPickItem): IDisposable {
+		const activeEditor = this.editorService.activeEditor;
+		if (!this.uriIdentityService.extUri.isEqual(pick.resource, activeEditor?.resource)) {
+			return Disposable.None; // active editor needs to be for resource
+		}
+
+		const activeEditorControl = this.editorService.activeTextEditorControl;
+		if (!activeEditorControl) {
+			return Disposable.None; // we need a text editor control to decorate and reveal
+		}
+
+		// we must remember our current view state to be able to restore
+		this.pickState.editorViewState.set();
+
+		// Reveal
+		activeEditorControl.revealRangeInCenter(pick.range.selection, ScrollType.Smooth);
+
+		// Decorate
+		this.addDecorations(activeEditorControl, pick.range.decoration);
+
+		return toDisposable(() => this.clearDecorations(activeEditorControl));
+	}
+
 	protected _getPicks(originalFilter: string, disposables: DisposableStore, token: CancellationToken, runOptions?: IAnythingQuickAccessProviderRunOptions): Picks<IAnythingQuickPickItem> | Promise<Picks<IAnythingQuickPickItem>> | FastAndSlowPicks<IAnythingQuickPickItem> | null {
 		if (runOptions?.filesOnly) {
 			return this.getAdditionalPicks(
@@ -362,6 +385,100 @@ export class AnythingQuickAccessProvider extends PickerQuickAccessProvider<IAnyt
 			disposables,
 			token
 		);
+	}
+
+	private _supportsLinks(runOptions?: IAnythingQuickAccessProviderRunOptions): boolean {
+		return !runOptions?.filesOnly && !runOptions?.fileSearchDelegate && !runOptions?.handleAccept && !this.pickState.isQuickNavigating;
+	}
+
+	private _getLinkPicks(filter: string, token: CancellationToken): Promise<(IAnythingQuickPickItem | IQuickPickSeparator)[]> | undefined {
+		// Require an explicit hierarchical URI, not a drive letter, file query, or Quick Access prefix.
+		if (!/^[a-z][a-z0-9+.-]+:\/\//i.test(filter)) {
+			return undefined;
+		}
+
+		let resource: URI;
+		try {
+			resource = URI.parse(filter, true);
+			if (/\s|\\/.test(filter) || [Schemas.command, Schemas.data, Schemas.internal, 'javascript'].includes(resource.scheme.toLowerCase())) {
+				throw new Error('Unsupported link');
+			}
+			if (resource.scheme.toLowerCase() === Schemas.http || resource.scheme.toLowerCase() === Schemas.https) {
+				new URL(filter);
+				if (!resource.authority) {
+					throw new Error('Missing link authority');
+				}
+			}
+		} catch {
+			return Promise.resolve([{
+				label: localize('invalidQuickOpenLink', "Invalid Link"),
+				description: localize('invalidQuickOpenLinkDescription', "Enter a valid link to open it from Quick Open.")
+			}]);
+		}
+
+		const sourceGroup = this._linkSourceGroup ?? this._editorGroupsService.activeGroup.id;
+		const open = async (openWith: (options: OpenInternalOptions) => Promise<boolean>, keyMods: IKeyMods, inBackground: boolean, forceOpenSideBySide = false): Promise<void> => {
+			try {
+				const openToSide = this._editorGroupsService.supportsSplitting && (keyMods.alt || (this.configuration.openEditorPinned && keyMods.ctrlCmd) || forceOpenSideBySide);
+				if (openToSide) {
+					await this.pickState.editorViewState.restore();
+					if (this._editorGroupsService.getGroup(sourceGroup)) {
+						this._editorGroupsService.activateGroup(sourceGroup);
+					}
+				}
+
+				const handled = await openWith({
+					fromUserGesture: true,
+					openToSide,
+					editorOptions: {
+						preserveFocus: inBackground,
+						pinned: keyMods.ctrlCmd || inBackground || this.configuration.openEditorPinned
+					}
+				});
+				if (!handled) {
+					this._notificationService.warn(localize('quickOpenLinkNotOpened', "The link could not be opened. It may be unsupported or opening it was canceled."));
+				}
+			} catch (error) {
+				this._notificationService.error(error);
+			}
+		};
+
+		const openToSideKeybinding = this.keybindingService.resolveKeybinding(decodeKeybinding(KeyMod.Alt | KeyCode.Enter, OS)!).at(0)?.getLabel();
+		const openToSideButton: IQuickInputButton = {
+			iconClass: ThemeIcon.asClassName(this.configuration.openSideBySideDirection === 'right' ? Codicon.splitHorizontal : Codicon.splitVertical),
+			tooltip: this.configuration.openSideBySideDirection === 'right'
+				? localize({ key: 'openLinkToSide', comment: ['{0} is a keyboard shortcut, such as Alt+Enter'] }, "Open to the Side ({0})", openToSideKeybinding)
+				: localize({ key: 'openLinkToBottom', comment: ['{0} is a keyboard shortcut, such as Alt+Enter'] }, "Open to the Bottom ({0})", openToSideKeybinding)
+		};
+		const createPick = (label: string, description: string | undefined, openWith: (options: OpenInternalOptions) => Promise<boolean>): IAnythingQuickPickItem => ({
+			resource,
+			label: `$(link-external) ${label}`,
+			description,
+			buttons: this._editorGroupsService.supportsSplitting ? [openToSideButton] : undefined,
+			accept: (keyMods, event) => open(openWith, keyMods, event.inBackground),
+			trigger: async (_buttonIndex, keyMods) => {
+				await open(openWith, keyMods, false, true);
+				return TriggerAction.CLOSE_PICKER;
+			}
+		});
+
+		const getPicks = async (): Promise<(IAnythingQuickPickItem | IQuickPickSeparator)[]> => {
+			let handlers: readonly ILinkHandler[] = [];
+			try {
+				handlers = await this._externalUriOpenerService.getLinkHandlers(filter, token);
+			} catch (error) {
+				this.logService.error(error);
+			}
+
+			if (handlers.length === 0) {
+				return [createPick(localize('openQuickOpenLink', "Open Link"), filter, options => this._openerService.open(filter, { ...options, allowContributedOpeners: true }))];
+			}
+			return [
+				{ type: 'separator', label: localize('openQuickOpenLinkWith', "open link") },
+				...handlers.map(handler => createPick(handler.label, handler.isDefault ? localize('openQuickOpenLinkDefault', "Default") : undefined, options => handler.open(options))),
+			];
+		};
+		return getPicks();
 	}
 
 	private doGetPicks(
@@ -512,105 +629,6 @@ export class AnythingQuickAccessProvider extends PickerQuickAccessProvider<IAnyt
 
 		return filteredAnythingPicks;
 	}
-
-
-	//#region Links
-
-	private _supportsLinks(runOptions?: IAnythingQuickAccessProviderRunOptions): boolean {
-		return !runOptions?.filesOnly && !runOptions?.fileSearchDelegate && !runOptions?.handleAccept && !this.pickState.isQuickNavigating;
-	}
-
-	private _getLinkPicks(filter: string, token: CancellationToken): Promise<(IAnythingQuickPickItem | IQuickPickSeparator)[]> | undefined {
-		// Require an explicit hierarchical URI, not a drive letter, file query, or Quick Access prefix.
-		if (!/^[a-z][a-z0-9+.-]+:\/\//i.test(filter)) {
-			return undefined;
-		}
-
-		let resource: URI;
-		try {
-			resource = URI.parse(filter, true);
-			if (/\s|\\/.test(filter) || [Schemas.command, Schemas.data, Schemas.internal, 'javascript'].includes(resource.scheme.toLowerCase())) {
-				throw new Error('Unsupported link');
-			}
-			if (resource.scheme.toLowerCase() === Schemas.http || resource.scheme.toLowerCase() === Schemas.https) {
-				new URL(filter);
-				if (!resource.authority) {
-					throw new Error('Missing link authority');
-				}
-			}
-		} catch {
-			return Promise.resolve([{
-				label: localize('invalidQuickOpenLink', "Invalid Link"),
-				description: localize('invalidQuickOpenLinkDescription', "Enter a valid link to open it from Quick Open.")
-			}]);
-		}
-
-		const sourceGroup = this._linkSourceGroup ?? this._editorGroupsService.activeGroup.id;
-		const open = async (openWith: (options: OpenInternalOptions) => Promise<boolean>, keyMods: IKeyMods, inBackground: boolean, forceOpenSideBySide = false): Promise<void> => {
-			try {
-				const openToSide = this._editorGroupsService.supportsSplitting && (keyMods.alt || (this.configuration.openEditorPinned && keyMods.ctrlCmd) || forceOpenSideBySide);
-				if (openToSide) {
-					await this.pickState.editorViewState.restore();
-					if (this._editorGroupsService.getGroup(sourceGroup)) {
-						this._editorGroupsService.activateGroup(sourceGroup);
-					}
-				}
-
-				const handled = await openWith({
-					fromUserGesture: true,
-					openToSide,
-					editorOptions: {
-						preserveFocus: inBackground,
-						pinned: keyMods.ctrlCmd || inBackground || this.configuration.openEditorPinned
-					}
-				});
-				if (!handled) {
-					this._notificationService.warn(localize('quickOpenLinkNotOpened', "The link could not be opened. It may be unsupported or opening it was canceled."));
-				}
-			} catch (error) {
-				this._notificationService.error(error);
-			}
-		};
-
-		const openToSideKeybinding = this.keybindingService.resolveKeybinding(decodeKeybinding(KeyMod.Alt | KeyCode.Enter, OS)!).at(0)?.getLabel();
-		const openToSideButton: IQuickInputButton = {
-			iconClass: ThemeIcon.asClassName(this.configuration.openSideBySideDirection === 'right' ? Codicon.splitHorizontal : Codicon.splitVertical),
-			tooltip: this.configuration.openSideBySideDirection === 'right'
-				? localize({ key: 'openLinkToSide', comment: ['{0} is a keyboard shortcut, such as Alt+Enter'] }, "Open to the Side ({0})", openToSideKeybinding)
-				: localize({ key: 'openLinkToBottom', comment: ['{0} is a keyboard shortcut, such as Alt+Enter'] }, "Open to the Bottom ({0})", openToSideKeybinding)
-		};
-		const createPick = (label: string, description: string | undefined, openWith: (options: OpenInternalOptions) => Promise<boolean>): IAnythingQuickPickItem => ({
-			resource,
-			label: `$(link-external) ${label}`,
-			description,
-			buttons: this._editorGroupsService.supportsSplitting ? [openToSideButton] : undefined,
-			accept: (keyMods, event) => open(openWith, keyMods, event.inBackground),
-			trigger: async (_buttonIndex, keyMods) => {
-				await open(openWith, keyMods, false, true);
-				return TriggerAction.CLOSE_PICKER;
-			}
-		});
-
-		const getPicks = async (): Promise<(IAnythingQuickPickItem | IQuickPickSeparator)[]> => {
-			let handlers: readonly ILinkHandler[] = [];
-			try {
-				handlers = await this._externalUriOpenerService.getLinkHandlers(filter, token);
-			} catch (error) {
-				this.logService.error(error);
-			}
-
-			if (handlers.length === 0) {
-				return [createPick(localize('openQuickOpenLink', "Open Link"), filter, options => this._openerService.open(filter, { ...options, allowContributedOpeners: true }))];
-			}
-			return [
-				{ type: 'separator', label: localize('openQuickOpenLinkWith', "open link") },
-				...handlers.map(handler => createPick(handler.label, handler.isDefault ? localize('openQuickOpenLinkDefault', "Default") : undefined, options => handler.open(options))),
-			];
-		};
-		return getPicks();
-	}
-
-	//#endregion
 
 
 	//#region Editor History
@@ -1113,29 +1131,6 @@ export class AnythingQuickAccessProvider extends PickerQuickAccessProvider<IAnyt
 				accept: (keyMods, event) => this.openAnything(activeGlobalResource, { keyMods, range: editorSymbolPick.range?.selection, preserveFocus: event.inBackground, forcePinned: event.inBackground })
 			};
 		});
-	}
-
-	private decorateAndRevealSymbolRange(pick: IEditorSymbolAnythingQuickPickItem): IDisposable {
-		const activeEditor = this.editorService.activeEditor;
-		if (!this.uriIdentityService.extUri.isEqual(pick.resource, activeEditor?.resource)) {
-			return Disposable.None; // active editor needs to be for resource
-		}
-
-		const activeEditorControl = this.editorService.activeTextEditorControl;
-		if (!activeEditorControl) {
-			return Disposable.None; // we need a text editor control to decorate and reveal
-		}
-
-		// we must remember our current view state to be able to restore
-		this.pickState.editorViewState.set();
-
-		// Reveal
-		activeEditorControl.revealRangeInCenter(pick.range.selection, ScrollType.Smooth);
-
-		// Decorate
-		this.addDecorations(activeEditorControl, pick.range.decoration);
-
-		return toDisposable(() => this.clearDecorations(activeEditorControl));
 	}
 
 	addDecorations(editor: IEditor, range: IRange): void {
