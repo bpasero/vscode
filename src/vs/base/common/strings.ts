@@ -68,26 +68,56 @@ export function htmlAttributeEncodeValue(value: string): string {
 	});
 }
 
+const _escapeTest = /[<>&]/;
+
 /**
  * Converts HTML characters inside the string to use entities instead. Makes the string safe from
  * being used e.g. in HTMLElement.innerHTML.
  */
 export function escape(html: string): string {
-	return html.replace(/[<>&]/g, function (match) {
-		switch (match) {
-			case '<': return '&lt;';
-			case '>': return '&gt;';
-			case '&': return '&amp;';
-			default: return match;
-		}
-	});
+	if (!_escapeTest.test(html)) {
+		return html;
+	}
+	// `&` must be replaced first so that the entities added below are not escaped again
+	return html
+		.replace(/&/g, '&amp;')
+		.replace(/</g, '&lt;')
+		.replace(/>/g, '&gt;');
 }
+
+const _regExpCharactersTest = /[\\\{\}\*\+\?\|\^\$\.\[\]\(\)]/;
+const _regExpCharactersReplace = /[\\\{\}\*\+\?\|\^\$\.\[\]\(\)]/g;
+const _regExpCharacters = (() => {
+	const table = new Uint8Array(128);
+	for (const ch of '\\{}*+?|^$.[]()') {
+		table[ch.charCodeAt(0)] = 1;
+	}
+	return table;
+})();
 
 /**
  * Escapes regular expression characters in a given string
  */
 export function escapeRegExpCharacters(value: string): string {
-	return value.replace(/[\\\{\}\*\+\?\|\^\$\.\[\]\(\)]/g, '\\$&');
+	// Short strings (such as single characters) are escaped faster
+	// with a loop than with a regular expression replace
+	if (value.length <= 32) {
+		let result: string | undefined;
+		let last = 0;
+		for (let i = 0; i < value.length; i++) {
+			const code = value.charCodeAt(i);
+			if (code < 128 && _regExpCharacters[code] === 1) {
+				result = (result ?? '') + value.substring(last, i) + '\\' + value[i];
+				last = i + 1;
+			}
+		}
+		return result === undefined ? value : result + value.substring(last);
+	}
+
+	if (!_regExpCharactersTest.test(value)) {
+		return value;
+	}
+	return value.replace(_regExpCharactersReplace, '\\$&');
 }
 
 /**
@@ -261,10 +291,13 @@ export function splitLines(str: string): string[] {
 }
 
 export function splitLinesIncludeSeparators(str: string): string[] {
-	const linesWithSeparators: string[] = [];
+	// Splitting with a capturing group yields [line, separator, line, separator, ..., line]
 	const splitLinesAndSeparators = str.split(/(\r\n|\r|\n)/);
-	for (let i = 0; i < Math.ceil(splitLinesAndSeparators.length / 2); i++) {
-		linesWithSeparators.push(splitLinesAndSeparators[2 * i] + (splitLinesAndSeparators[2 * i + 1] ?? ''));
+	const length = splitLinesAndSeparators.length;
+	const linesWithSeparators: string[] = new Array((length + 1) >> 1);
+	for (let i = 0, j = 0; i < length; i += 2, j++) {
+		const separator = splitLinesAndSeparators[i + 1];
+		linesWithSeparators[j] = separator === undefined ? splitLinesAndSeparators[i] : splitLinesAndSeparators[i] + separator;
 	}
 	return linesWithSeparators;
 }
@@ -661,6 +694,23 @@ export function getCharContainingOffset(str: string, offset: number): [number, n
 }
 
 export function charCount(str: string): number {
+	// Fast path for 7-bit ASCII: every character is a grapheme of its
+	// own, except for CR LF which is a single grapheme (GB3)
+	let crlfCount = 0;
+	for (let i = 0, len = str.length; i < len; i++) {
+		const chCode = str.charCodeAt(i);
+		if (chCode >= 127) {
+			return graphemeCount(str);
+		}
+		if (chCode === CharCode.CarriageReturn && str.charCodeAt(i + 1) === CharCode.LineFeed) {
+			crlfCount++;
+			i++;
+		}
+	}
+	return str.length - crlfCount;
+}
+
+function graphemeCount(str: string): number {
 	const iterator = new GraphemeIterator(str);
 	let length = 0;
 	while (!iterator.eol()) {
@@ -909,7 +959,6 @@ const PROMPT_NON_PRINTABLE = /\\\[.*?\\\]/g;
 export function removeAnsiEscapeCodesFromPrompt(str: string): string {
 	return removeAnsiEscapeCodes(str).replace(PROMPT_NON_PRINTABLE, '');
 }
-
 
 // -- UTF-8 BOM
 
