@@ -712,6 +712,96 @@ suite('Glob', () => {
 		assert.deepStrictEqual(glob.splitGlobAware('[foo,bar],foo,bar,[foo,bar]', ','), ['[foo,bar]', 'foo', 'bar', '[foo,bar]']);
 	});
 
+	test('split glob aware (edge cases)', function () {
+		assert.deepStrictEqual(glob.splitGlobAware('', '/'), []);
+		assert.deepStrictEqual(glob.splitGlobAware('/', '/'), ['']);
+		assert.deepStrictEqual(glob.splitGlobAware('a/', '/'), ['a']);
+		assert.deepStrictEqual(glob.splitGlobAware('/a', '/'), ['', 'a']);
+		assert.deepStrictEqual(glob.splitGlobAware('a//b', '/'), ['a', '', 'b']);
+		assert.deepStrictEqual(glob.splitGlobAware('a/b//', '/'), ['a', 'b', '']);
+		assert.deepStrictEqual(glob.splitGlobAware('**/{a/b,c}/[x/y]/*.ts', '/'), ['**', '{a/b,c}', '[x/y]', '*.ts']);
+		assert.deepStrictEqual(glob.splitGlobAware('👍/b👍c/👍', '/'), ['👍', 'b👍c', '👍']);
+		assert.deepStrictEqual(glob.splitGlobAware('a,b', '/'), ['a,b']);
+		assert.deepStrictEqual(glob.splitGlobAware('a,,b,', ','), ['a', '', 'b']);
+	});
+
+	test('cached patterns respect options', function () {
+		const pattern = '**/Foo/*.TS';
+
+		// The same pattern is parsed with different options, the cached
+		// result for one set of options must not be used for another
+		for (let i = 0; i < 2; i++) {
+			assert.strictEqual(glob.match(pattern, '/x/Foo/bar.TS'), true);
+			assert.strictEqual(glob.match(pattern, '/x/foo/bar.ts'), false);
+			assert.strictEqual(glob.match(pattern, '/x/foo/bar.ts', { ignoreCase: true }), true);
+			assert.strictEqual(glob.match(pattern, '/x/foo/bar.ts', { ignoreCase: false }), false);
+			assert.strictEqual(glob.match(` ${pattern} `, '/x/Foo/bar.TS'), true);
+		}
+
+		for (let i = 0; i < 2; i++) {
+			assert.strictEqual(glob.match('**/out/**', '/x/out/', { trimForExclusions: true }), false);
+			assert.strictEqual(glob.match('**/out/**', '/x/out/'), true);
+		}
+
+		// expressions use their own cache entries
+		for (let i = 0; i < 2; i++) {
+			assert.strictEqual(glob.match({ '**/*.TS': true }, '/x/bar.ts'), null);
+			assert.strictEqual(glob.match({ '**/*.TS': true }, '/x/bar.ts', { ignoreCase: true }), '**/*.TS' as unknown);
+			assert.strictEqual(glob.match('**/*.TS', '/x/bar.ts'), false);
+		}
+	});
+
+	test('match with relative pattern (cached)', function () {
+		const base = isWindows ? 'C:\\DNXConsoleApp' : '/DNXConsoleApp';
+		const p: glob.IRelativePattern = { base, pattern: '**/*.cs' };
+		const other: glob.IRelativePattern = { base: isWindows ? 'C:\\Other' : '/Other', pattern: '**/*.cs' };
+
+		for (let i = 0; i < 2; i++) {
+			assert.strictEqual(glob.match(p, isWindows ? 'C:\\DNXConsoleApp\\Program.cs' : '/DNXConsoleApp/Program.cs'), true);
+			assert.strictEqual(glob.match(p, isWindows ? 'C:\\DNXConsoleApp\\foo\\Program.cs' : '/DNXConsoleApp/foo/Program.cs'), true);
+			assert.strictEqual(glob.match(p, isWindows ? 'C:\\DNXConsoleApp\\Program.ts' : '/DNXConsoleApp/Program.ts'), false);
+			assert.strictEqual(glob.match(other, isWindows ? 'C:\\DNXConsoleApp\\Program.cs' : '/DNXConsoleApp/Program.cs'), false);
+			assert.strictEqual(glob.match('**/*.cs', isWindows ? 'C:\\DNXConsoleApp\\Program.cs' : '/DNXConsoleApp/Program.cs'), true);
+		}
+	});
+
+	test('expression with many basenames', function () {
+		const expression: glob.IExpression = {
+			'**/node_modules': true,
+			'**/.git': true,
+			'**/{dist,out}': true,
+			'**/*.log': true,
+			'**/build': true,
+			'{**/build,**/coverage}': true
+		};
+
+		for (const ignoreCase of [false, true]) {
+			const p = glob.parse(expression, { ignoreCase });
+			assert.deepStrictEqual(glob.getBasenameTerms(p), ['node_modules', '.git', 'build', 'build', 'coverage']);
+
+			assert.strictEqual(p('/x/node_modules'), '**/node_modules');
+			assert.strictEqual(p('/x/node_modules', 'node_modules'), '**/node_modules');
+			assert.strictEqual(p('x\\.git'), '**/.git');
+			assert.strictEqual(p('.git'), '**/.git');
+			assert.strictEqual(p('/x/out'), '**/{dist,out}');
+			assert.strictEqual(p('/x/a.log'), '**/*.log');
+			assert.strictEqual(p('/x/coverage', 'coverage'), '{**/build,**/coverage}');
+			assert.strictEqual(p('/x/src'), null);
+			assert.strictEqual(p('/x/src', 'src'), null);
+
+			// the first pattern of a duplicate basename wins
+			assert.strictEqual(p('/x/build'), '**/build');
+
+			// lookups are case sensitive unless ignoreCase is set
+			assert.strictEqual(p('/x/Node_Modules'), ignoreCase ? '**/node_modules' : null);
+			assert.strictEqual(p('/x/BUILD', 'BUILD'), ignoreCase ? '**/build' : null);
+
+			// inherited object properties are not basenames
+			assert.strictEqual(p('/x/constructor'), null);
+			assert.strictEqual(p('/x/__proto__'), null);
+		}
+	});
+
 	test('expression with disabled glob', function () {
 		const expr = { '**/*.js': false };
 

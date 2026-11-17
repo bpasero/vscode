@@ -770,6 +770,80 @@ suite('Strings', () => {
 		assert.strictEqual(strings.InvisibleCharacters.containsInvisibleCharacter('a\u{e015a}\u000bb'), true);
 	});
 
+	test('escape (ampersands and entities)', () => {
+		assert.strictEqual(strings.escape('Tom & Jerry'), 'Tom &amp; Jerry');
+		assert.strictEqual(strings.escape('&lt;'), '&amp;lt;');
+		assert.strictEqual(strings.escape('<&>'), '&lt;&amp;&gt;');
+		assert.strictEqual(strings.escape('a<b>c&d"e\'f'), 'a&lt;b&gt;c&amp;d"e\'f');
+		assert.strictEqual(strings.escape('&&<<>>'), '&amp;&amp;&lt;&lt;&gt;&gt;');
+	});
+
+	test('escapeRegExpCharacters', () => {
+		const reference = (value: string) => value.replace(/[\\\{\}\*\+\?\|\^\$\.\[\]\(\)]/g, '\\$&');
+		const specials = '\\{}*+?|^$.[]()';
+
+		assert.strictEqual(strings.escapeRegExpCharacters(''), '');
+		assert.strictEqual(strings.escapeRegExpCharacters('a'), 'a');
+		assert.strictEqual(strings.escapeRegExpCharacters('.'), '\\.');
+		assert.strictEqual(strings.escapeRegExpCharacters('some.file(name)'), 'some\\.file\\(name\\)');
+		assert.strictEqual(strings.escapeRegExpCharacters('-,/#'), '-,/#');
+		assert.strictEqual(strings.escapeRegExpCharacters('👍.👍'), '👍\\.👍');
+
+		// every special character, on its own and combined
+		for (const ch of specials) {
+			assert.strictEqual(strings.escapeRegExpCharacters(ch), `\\${ch}`);
+		}
+		assert.strictEqual(strings.escapeRegExpCharacters(specials), reference(specials));
+
+		// short and long strings are escaped the same way
+		for (const value of ['plainword', 'a.b', '..', 'x'.repeat(32), 'x'.repeat(31) + '.', 'x'.repeat(33), 'x'.repeat(32) + '.', `${'abc.def*'.repeat(10)}`, `${'ä(ö)ü'.repeat(10)}`]) {
+			assert.strictEqual(strings.escapeRegExpCharacters(value), reference(value), value);
+		}
+
+		// escaped strings match themselves literally
+		for (const value of ['a.b*c', specials, `${specials}${specials}${specials}`]) {
+			assert.ok(new RegExp(`^${strings.escapeRegExpCharacters(value)}$`).test(value), value);
+		}
+	});
+
+	test('charCount', () => {
+		assert.strictEqual(strings.charCount(''), 0);
+		assert.strictEqual(strings.charCount('a'), 1);
+		assert.strictEqual(strings.charCount('hello world'), 11);
+		assert.strictEqual(strings.charCount('\t\x00\x1f~'), 4);
+
+		// CR LF is a single grapheme, other line breaks are not combined
+		assert.strictEqual(strings.charCount('\r\n'), 1);
+		assert.strictEqual(strings.charCount('a\r\nb'), 3);
+		assert.strictEqual(strings.charCount('\n\r'), 2);
+		assert.strictEqual(strings.charCount('\r\r\n'), 2);
+		assert.strictEqual(strings.charCount('\r'), 1);
+		assert.strictEqual(strings.charCount('a\r'), 2);
+		assert.strictEqual(strings.charCount('line\r\nline\r\n'), 10);
+
+		// non ASCII characters, also after a long ASCII prefix
+		assert.strictEqual(strings.charCount('\x7f'), 1);
+		assert.strictEqual(strings.charCount('héllo'), 5);
+		assert.strictEqual(strings.charCount('e\u0301'), 1);
+		assert.strictEqual(strings.charCount('👍'), 1);
+		assert.strictEqual(strings.charCount('👍🏽'), 1);
+		assert.strictEqual(strings.charCount('👨‍👩‍👧'), 1);
+		assert.strictEqual(strings.charCount('abc\r\n👍🏽'), 5);
+		assert.strictEqual(strings.charCount(`${'a'.repeat(100)}e\u0301`), 101);
+	});
+
+	test('splitLinesIncludeSeparators', () => {
+		assert.deepStrictEqual(strings.splitLinesIncludeSeparators(''), ['']);
+		assert.deepStrictEqual(strings.splitLinesIncludeSeparators('a'), ['a']);
+		assert.deepStrictEqual(strings.splitLinesIncludeSeparators('\n'), ['\n', '']);
+		assert.deepStrictEqual(strings.splitLinesIncludeSeparators('a\nb'), ['a\n', 'b']);
+		assert.deepStrictEqual(strings.splitLinesIncludeSeparators('a\r\nb\rc\nd'), ['a\r\n', 'b\r', 'c\n', 'd']);
+		assert.deepStrictEqual(strings.splitLinesIncludeSeparators('a\r\n'), ['a\r\n', '']);
+		assert.deepStrictEqual(strings.splitLinesIncludeSeparators('\r\r\n\n'), ['\r', '\r\n', '\n', '']);
+		assert.deepStrictEqual(strings.splitLinesIncludeSeparators('\n\r'), ['\n', '\r', '']);
+		assert.strictEqual(strings.splitLinesIncludeSeparators('a\nb\r\nc').join(''), 'a\nb\r\nc');
+	});
+
 	test('multibyteAwareBtoa', () => {
 		assert.ok(strings.multibyteAwareBtoa('hello world').length > 0);
 		assert.ok(strings.multibyteAwareBtoa('平仮名').length > 0);

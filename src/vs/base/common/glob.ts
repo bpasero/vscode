@@ -73,15 +73,15 @@ export function splitGlobAware(pattern: string, splitChar: string): string[] {
 	let inBraces = false;
 	let inBrackets = false;
 
-	let curVal = '';
-	for (const char of pattern) {
-		switch (char) {
+	// Track the start of the current segment and slice it out of the
+	// pattern once complete instead of concatenating character by character
+	let segmentStart = 0;
+	for (let i = 0; i < pattern.length; i++) {
+		switch (pattern[i]) {
 			case splitChar:
 				if (!inBraces && !inBrackets) {
-					segments.push(curVal);
-					curVal = '';
-
-					continue;
+					segments.push(pattern.substring(segmentStart, i));
+					segmentStart = i + 1;
 				}
 				break;
 			case '{':
@@ -97,13 +97,11 @@ export function splitGlobAware(pattern: string, splitChar: string): string[] {
 				inBrackets = false;
 				break;
 		}
-
-		curVal += char;
 	}
 
 	// Tail
-	if (curVal) {
-		segments.push(curVal);
+	if (segmentStart < pattern.length) {
+		segments.push(pattern.substring(segmentStart));
 	}
 
 	return segments;
@@ -308,6 +306,11 @@ interface ParsedExpressionPattern {
 
 const CACHE = new LRUCache<string, ParsedStringPattern>(10000); // bounded to 10000 elements
 
+// Patterns parsed with default options (the most common case) are cached
+// separately, keyed by the pattern itself. This avoids building a new cache
+// key string on every lookup, which is expensive to hash.
+const DEFAULT_OPTIONS_CACHE = new LRUCache<string, ParsedStringPattern>(10000); // bounded to 10000 elements
+
 const FALSE = function () {
 	return false;
 };
@@ -351,19 +354,18 @@ function parsePattern(arg1: string | IRelativePattern, options: IGlobOptions, ca
 	pattern = pattern.trim();
 
 	const ignoreCase = options.ignoreCase ?? false;
-	const internalOptions = {
-		...options,
-		equals: ignoreCase ? equalsIgnoreCase : (a: string, b: string) => a === b,
-		endsWith: ignoreCase ? endsWithIgnoreCase : (str: string, candidate: string) => str.endsWith(candidate),
-		isEqualOrParent: (base: string, candidate: string) => isEqualOrParent(base, candidate, options.ignoreCase ?? !isLinux /* preserve old behaviour for when option is not adopted */)
-	};
 
 	// Check cache
-	const patternKey = `${cacheKey === undefined ? `default:${ignoreCase ? pattern.toLowerCase() : pattern}` : `custom:${cacheKey}`}_${!!options.trimForExclusions}_${ignoreCase}`;
-	let parsedPattern = CACHE.get(patternKey);
+	const isDefaultOptions = cacheKey === undefined && !ignoreCase && !options.trimForExclusions;
+	const cache = isDefaultOptions ? DEFAULT_OPTIONS_CACHE : CACHE;
+	const patternKey = isDefaultOptions ? pattern : `${cacheKey === undefined ? `default:${ignoreCase ? pattern.toLowerCase() : pattern}` : `custom:${cacheKey}`}_${!!options.trimForExclusions}_${ignoreCase}`;
+	let parsedPattern = cache.get(patternKey);
 	if (parsedPattern) {
-		return wrapRelativePattern(parsedPattern, arg1, internalOptions);
+		// Only create internal options when they are needed to avoid allocations on cache hits
+		return typeof arg1 === 'string' ? parsedPattern : wrapRelativePattern(parsedPattern, arg1, toInternalOptions(options));
 	}
+
+	const internalOptions = toInternalOptions(options);
 
 	// Check for Trivials
 	let match: RegExpExecArray | null;
@@ -385,9 +387,28 @@ function parsePattern(arg1: string | IRelativePattern, options: IGlobOptions, ca
 	}
 
 	// Cache
-	CACHE.set(patternKey, parsedPattern);
+	cache.set(patternKey, parsedPattern);
 
 	return wrapRelativePattern(parsedPattern, arg1, internalOptions);
+}
+
+function equalsCaseSensitive(a: string, b: string): boolean {
+	return a === b;
+}
+
+function endsWithCaseSensitive(str: string, candidate: string): boolean {
+	return str.endsWith(candidate);
+}
+
+function toInternalOptions(options: IGlobOptions): IGlobOptionsInternal {
+	const ignoreCase = options.ignoreCase ?? false;
+
+	return {
+		...options,
+		equals: ignoreCase ? equalsIgnoreCase : equalsCaseSensitive,
+		endsWith: ignoreCase ? endsWithIgnoreCase : endsWithCaseSensitive,
+		isEqualOrParent: (base: string, candidate: string) => isEqualOrParent(base, candidate, options.ignoreCase ?? !isLinux /* preserve old behaviour for when option is not adopted */)
+	};
 }
 
 function wrapRelativePattern(parsedPattern: ParsedStringPattern, arg2: string | IRelativePattern, options: IGlobOptionsInternal): ParsedStringPattern {
@@ -551,7 +572,14 @@ export function match(arg1: string | IExpression | IRelativePattern, path: strin
 		return false;
 	}
 
-	return parse(arg1, options)(path) as boolean;
+	// Glob with String: match directly against the (cached) parsed pattern
+	// to avoid creating a wrapper function on every call
+	if (typeof arg1 === 'string' || isRelativePattern(arg1)) {
+		return !!parsePattern(arg1, options ?? {})(path);
+	}
+
+	// Glob with Expression: returns the matching pattern (or `null`) as before
+	return parse(arg1, options)(path) as unknown as boolean;
 }
 
 /**
@@ -1106,6 +1134,17 @@ function aggregateBasenameMatches(parsedPatterns: Array<ParsedStringPattern | Pa
 		}, [] as string[]);
 	}
 
+	// Map each basename to the pattern of its first occurrence for fast lookups
+	let basenameToPattern: Map<string, string> | undefined;
+	if (!ignoreCase) {
+		basenameToPattern = new Map<string, string>();
+		for (let i = 0, n = basenames.length; i < n; i++) {
+			if (!basenameToPattern.has(basenames[i])) {
+				basenameToPattern.set(basenames[i], patterns[i]);
+			}
+		}
+	}
+
 	const aggregate: ParsedStringPattern = function (path: string, basename?: string) {
 		if (typeof path !== 'string') {
 			return null;
@@ -1123,7 +1162,11 @@ function aggregateBasenameMatches(parsedPatterns: Array<ParsedStringPattern | Pa
 			basename = path.substring(i);
 		}
 
-		const index = ignoreCase ? basenames.findIndex(candidate => equalsIgnoreCase(candidate, basename)) : basenames.indexOf(basename);
+		if (basenameToPattern) {
+			return basenameToPattern.get(basename) ?? null;
+		}
+
+		const index = basenames.findIndex(candidate => equalsIgnoreCase(candidate, basename));
 		return index !== -1 ? patterns[index] : null;
 	};
 
